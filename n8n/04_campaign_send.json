@@ -1,0 +1,100 @@
+{
+  "name": "04 - Kampanya Gonderimi (BACKLOG SS A m.26)",
+  "nodes": [
+    {
+      "id": "sticky_intro",
+      "name": "Not",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-360, -260],
+      "parameters": {
+        "width": 480,
+        "height": 240,
+        "content": "## BACKLOG.md SS A madde 26\nHer 5 dakikada vadesi gelmis kampanyalar tek sorguda taranir (`GET /internal/campaigns-due-for-send`, servis rolu/HMAC, Postgres advisory lock ile tekil calisma garanti edilir - `CampaignScanRepository`). Sorgu her kampanyayi ATOMIK olarak 'sent' durumuna claim eder (UPDATE...RETURNING) ve hedef musteri listesini (target_filter) ayni cevapta duzlestirilmis satirlar halinde doner. Idempotency: `<campaign_id>_<customer_id>` /internal/whatsapp/send'e idempotency_key olarak verilir."
+      }
+    },
+    {
+      "id": "cron_trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-360, 0],
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "*/5 * * * *" } ] }
+      }
+    },
+    {
+      "id": "sign_get_due",
+      "name": "Sign: Empty GET",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-120, 0],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update('').digest('hex');\nreturn { json: { get_signature: signature } };"
+      }
+    },
+    {
+      "id": "http_get_due",
+      "name": "Get Campaigns Due For Send",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.BACKEND_BASE_URL}}/internal/campaigns-due-for-send",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-Signature", "value": "={{$json.get_signature}}" } ] },
+        "options": {}
+      }
+    },
+    {
+      "id": "split_recipients",
+      "name": "Split Out Recipients",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [360, 0],
+      "parameters": { "fieldToSplitOut": "data" }
+    },
+    {
+      "id": "build_campaign_send",
+      "name": "Build Campaign Template Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst row = $json;\nconst bodyObj = {\n  tenant_id: row.tenant_id,\n  type: 'template',\n  customer_id: row.customer_id,\n  template_internal_name: row.template_internal_name,\n  variables: [row.customer_name || ''],\n  idempotency_key: row.campaign_id + '_' + row.customer_id,\n};\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature } };"
+      }
+    },
+    {
+      "id": "http_send_campaign",
+      "name": "Send Campaign Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.body_str}}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "X-Signature", "value": "={{$json.signature}}" }
+        ] },
+        "options": { "response": { "response": { "neverError": true } } }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": { "main": [ [ { "node": "Sign: Empty GET", "type": "main", "index": 0 } ] ] },
+    "Sign: Empty GET": { "main": [ [ { "node": "Get Campaigns Due For Send", "type": "main", "index": 0 } ] ] },
+    "Get Campaigns Due For Send": { "main": [ [ { "node": "Split Out Recipients", "type": "main", "index": 0 } ] ] },
+    "Split Out Recipients": { "main": [ [ { "node": "Build Campaign Template Send", "type": "main", "index": 0 } ] ] },
+    "Build Campaign Template Send": { "main": [ [ { "node": "Send Campaign Template", "type": "main", "index": 0 } ] ] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,6 @@
+@echo off
+set BACKEND_BASE_URL=http://localhost:8000
+set N8N_SERVICE_SECRET=21a2c819aa53e05abadef5d32770ededbc6e9a9c8fa5c40c151dadbe1c3513b6
+set NODE_FUNCTION_ALLOW_BUILTIN=crypto
+set N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+n8n start

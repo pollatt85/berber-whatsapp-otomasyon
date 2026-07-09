@@ -1,0 +1,32 @@
+# --- Sırlar / ortam (ASLA commit edilmez; .env.example commit'lenir) ---
+.env
+
+# --- Composer bağımlılıkları (composer.json/lock commit'lenir, vendor yeniden üretilir) ---
+/vendor/
+
+# --- Redis (Windows portable build indirilir, commit'lenmez — BACKLOG §A m.16) ---
+/redis/*.exe
+/redis/*.pdb
+/redis/*.dll
+/redis/dump.rdb
+/redis/*.log
+
+# --- Yerel Claude Code ayarları (launch.json paylaşılır, kişisel izinler değil) ---
+.claude/settings.local.json
+
+# --- Kullanıcı yüklemeleri (tenant logoları vb. — runtime verisi) ---
+/public/uploads/logos/*
+!/public/uploads/logos/.gitkeep
+
+# --- Loglar / geçici ---
+*.log
+/scratchpad/
+*.tmp
+/dump.rdb
+
+# --- OS / editör ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,100 @@
+{
+  "name": "02 - Hatirlatma Taramasi (04 SS5)",
+  "nodes": [
+    {
+      "id": "sticky_intro",
+      "name": "Not",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-360, -260],
+      "parameters": {
+        "width": 460,
+        "height": 220,
+        "content": "## 04_n8n_Workflows.md SS5\nHer 15 dakikada tum tenant'lar tek sorguda taranir (`GET /internal/appointments-due-for-reminder`, servis rolu/HMAC, Postgres advisory lock ile tekil calisma garanti edilir - `AppointmentScanRepository`). Idempotency: `message_log.idempotency_key = <appointment_id>_reminder`, Backend zaten bunu SQL'de filtreliyor; n8n tekrar kontrol etmez."
+      }
+    },
+    {
+      "id": "cron_trigger",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-360, 0],
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "*/15 * * * *" } ] }
+      }
+    },
+    {
+      "id": "sign_get_due",
+      "name": "Sign: Empty GET",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-120, 0],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update('').digest('hex');\nreturn { json: { get_signature: signature } };"
+      }
+    },
+    {
+      "id": "http_get_due",
+      "name": "Get Appointments Due For Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.BACKEND_BASE_URL}}/internal/appointments-due-for-reminder",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-Signature", "value": "={{$json.get_signature}}" } ] },
+        "options": {}
+      }
+    },
+    {
+      "id": "split_appointments",
+      "name": "Split Out Appointments",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [360, 0],
+      "parameters": { "fieldToSplitOut": "data" }
+    },
+    {
+      "id": "build_reminder_send",
+      "name": "Build Reminder Template Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst appt = $json;\nconst bodyObj = {\n  tenant_id: appt.tenant_id,\n  type: 'template',\n  customer_id: appt.customer_id,\n  template_internal_name: 'appointment_reminder',\n  variables: [appt.customer_name || '', appt.time_range || ''],\n  idempotency_key: appt.id + '_reminder',\n};\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature } };"
+      }
+    },
+    {
+      "id": "http_send_reminder",
+      "name": "Send Reminder Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.body_str}}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "X-Signature", "value": "={{$json.signature}}" }
+        ] },
+        "options": { "response": { "response": { "neverError": true } } }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": { "main": [ [ { "node": "Sign: Empty GET", "type": "main", "index": 0 } ] ] },
+    "Sign: Empty GET": { "main": [ [ { "node": "Get Appointments Due For Reminder", "type": "main", "index": 0 } ] ] },
+    "Get Appointments Due For Reminder": { "main": [ [ { "node": "Split Out Appointments", "type": "main", "index": 0 } ] ] },
+    "Split Out Appointments": { "main": [ [ { "node": "Build Reminder Template Send", "type": "main", "index": 0 } ] ] },
+    "Build Reminder Template Send": { "main": [ [ { "node": "Send Reminder Template", "type": "main", "index": 0 } ] ] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}
