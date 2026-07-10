@@ -1,0 +1,100 @@
+{
+  "name": "03 - Pending Randevu TTL Iptali (04 SS6)",
+  "nodes": [
+    {
+      "id": "sticky_intro",
+      "name": "Not",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-360, -260],
+      "parameters": {
+        "width": 460,
+        "height": 220,
+        "content": "## 04_n8n_Workflows.md SS6\nHer 5 dakikada bir, `status='pending' AND created_at + tenants.pending_ttl_minutes < now()` olan randevular tum tenant'lar icin tek sorguda taranir (`GET /internal/appointments-expired-pending`, servis rolu/HMAC, advisory lock). Iptal `PATCH /appointments/{id}/cancel` ile yapilir; slot exclusion constraint'in WHERE kosulu sayesinde otomatik acilir - ekstra islem gerekmez."
+      }
+    },
+    {
+      "id": "cron_trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-360, 0],
+      "parameters": {
+        "rule": { "interval": [ { "field": "cronExpression", "expression": "*/5 * * * *" } ] }
+      }
+    },
+    {
+      "id": "sign_get_expired",
+      "name": "Sign: Empty GET",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-120, 0],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update('').digest('hex');\nreturn { json: { get_signature: signature } };"
+      }
+    },
+    {
+      "id": "http_get_expired",
+      "name": "Get Expired Pending Appointments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.BACKEND_BASE_URL}}/internal/appointments-expired-pending",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "X-Signature", "value": "={{$json.get_signature}}" } ] },
+        "options": {}
+      }
+    },
+    {
+      "id": "split_appointments",
+      "name": "Split Out Appointments",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [360, 0],
+      "parameters": { "fieldToSplitOut": "data" }
+    },
+    {
+      "id": "sign_cancel_expired",
+      "name": "Sign: Cancel (TTL)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst appt = $json;\nconst bodyObj = { tenant_id: appt.tenant_id, reason: 'timeout' };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { appointment_id: appt.id, body_str: bodyStr, signature } };"
+      }
+    },
+    {
+      "id": "http_cancel_expired",
+      "name": "Cancel Expired Appointment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 0],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.appointment_id}}/cancel",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.body_str}}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Content-Type", "value": "application/json" },
+          { "name": "X-Signature", "value": "={{$json.signature}}" }
+        ] },
+        "options": { "response": { "response": { "neverError": true } } }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": { "main": [ [ { "node": "Sign: Empty GET", "type": "main", "index": 0 } ] ] },
+    "Sign: Empty GET": { "main": [ [ { "node": "Get Expired Pending Appointments", "type": "main", "index": 0 } ] ] },
+    "Get Expired Pending Appointments": { "main": [ [ { "node": "Split Out Appointments", "type": "main", "index": 0 } ] ] },
+    "Split Out Appointments": { "main": [ [ { "node": "Sign: Cancel (TTL)", "type": "main", "index": 0 } ] ] },
+    "Sign: Cancel (TTL)": { "main": [ [ { "node": "Cancel Expired Appointment", "type": "main", "index": 0 } ] ] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

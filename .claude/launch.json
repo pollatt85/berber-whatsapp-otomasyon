@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "C:\\xampp\\php\\php.exe",
+      "runtimeArgs": ["-S", "localhost:8000", "-t", "public", "public/index.php"],
+      "port": 8000,
+      "autoPort": false
+    },
+    {
+      "name": "backend-alt",
+      "runtimeExecutable": "C:\\xampp\\php\\php.exe",
+      "runtimeArgs": ["-S", "localhost:8010", "-t", "public", "public/index.php"],
+      "port": 8010,
+      "autoPort": false
+    },
+    {
+      "name": "n8n",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "scripts\\start_n8n.cmd"],
+      "port": 5678,
+      "autoPort": false
+    },
+    {
+      "name": "redis",
+      "runtimeExecutable": "redis\\redis-server.exe",
+      "runtimeArgs": ["redis\\redis.windows.conf", "--port", "6379"],
+      "port": 6379,
+      "autoPort": false
+    }
+  ]
+}

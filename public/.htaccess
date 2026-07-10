@@ -1,0 +1,15 @@
+# Dev kolayligi (BACKLOG.md SS B E6): var olan dosya/dizinleri (ör. /uploads/logo.png)
+# oldugu gibi sun, geri kalan tum istekleri front controller'a yonlendir — PHP built-in
+# server'in (`php -S localhost:8000 -t public public/index.php`) davranisiyla ayni.
+RewriteEngine On
+
+# Apache mod_php varsayilan olarak Authorization header'ini $_SERVER['HTTP_AUTHORIZATION']'a
+# ILETMEZ (guvenlik amacli strip) — PHP built-in server bunu otomatik veriyor, Apache vermiyor.
+# src/Http/Request.php::bearerToken() bu header'i okuyor (panel JWT + n8n HMAC); Apache'de
+# bu satir olmadan TUM panel/servis istekleri 401 doner (login basarili olsa bile).
+RewriteCond %{HTTP:Authorization} ^(.*)
+RewriteRule ^ - [E=HTTP_AUTHORIZATION:%1]
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule ^ index.php [L]
