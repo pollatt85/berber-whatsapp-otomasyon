@@ -1115,3 +1115,72 @@ login → **tüm 5 istek 200** → dashboard'da kalındı, gerçek veriler (2 bu
 hizmet, 2 personel) render edildi. Port 8000 zaten etkilenmemişti, regresyon yok.
 
 **STATUS: PHASE_29_APACHE_AUTHORIZATION_HEADER_FIX**
+
+## PHASE_30 — 2026-07-10 (özet; detay PROJECT_MEMORY.md)
+
+Ev laptopunda sıfırdan ortam kurulumu (PostgreSQL 16 unattended, .env yeniden) + eski kilitli
+WABA yerine YENİ portföy/App/WABA (`Test Berber 2` / `BerberApp` / WABA 1359511886136495) ile
+kalıcı System User token'ı bağlandı; `/internal/whatsapp/send` **ilk kez gerçek teslimat**
+yaptı (text mesajı kullanıcının telefonunda doğrulandı). Yan bulgu: şablon dili sabit `'tr'`
+(PHASE_32'de düzeltildi).
+
+**STATUS: PHASE_30_REAL_WABA_DELIVERY**
+
+## PHASE_31 — 2026-07-10 (özet; detay PROJECT_MEMORY.md)
+
+Inbound webhook gerçek trafikle bağlandı: ngrok sabit alan adı → localhost:8000, META_APP_SECRET
+dolduruldu, Meta callback URL/verify token kaydedildi. **Kritik bulgu:** System User ile bağlanan
+WABA app'e `subscribed_apps` abonesi değildi → webhook hiç tetiklenmiyordu; `POST
+/{waba-id}/subscribed_apps` ile düzeltildi (BACKLOG m.29). Gerçek gelen mesaj Meta → ngrok →
+Backend → n8n → gerçek interactive menü yanıtı olarak uçtan uca doğrulandı.
+
+**STATUS: PHASE_31_INBOUND_WEBHOOK_E2E**
+
+## PHASE_32 — 2026-07-10
+
+**Kalan tüm BACKLOG maddeleri tek oturumda kapatıldı** (kullanıcı talebi: "kalan tüm maddeleri
+bir kerede bitir").
+
+1. **Şablon dili düzeltmesi** (`migrations/0005_template_language.sql`) —
+   `message_templates.language` kolonu eklendi; `templates/sync` Meta'dan gelen dili saklıyor,
+   `send()` `istek gövdesi > DB kolonu > 'tr'` önceliğiyle kullanıyor
+   (`WhatsAppInternalController`). **İlk gerçek `type=template` teslimatı yapıldı:**
+   `hello_world` (`en_US`, dil DB'den) gerçek telefona Meta üzerinden `sent` + gerçek `wamid`
+   ile gönderildi. (BACKLOG m.7'nin son açık doğrulaması + PHASE_30 yan bulgusu kapandı.)
+2. **Panel WhatsApp tier/kalite alanı** (BACKLOG m.17) — `MetaGraphClient::getPhoneNumberHealth`
+   + `GET /settings/whatsapp/health` (panel JWT; Meta'ya ulaşılamazsa `available:false` ile 200)
+   + `/panel/settings/whatsapp`'a "Mesajlaşma Limiti ve Kalite" kartı (kalite rozeti, tier
+   etiketi, düşük kademe uyarısı). Gerçek WABA verisiyle tarayıcıda doğrulandı (GREEN, TIER_250).
+3. **Embedded Signup** (BACKLOG m.25 + m.29) — `POST /settings/whatsapp/connect` (owner/manager):
+   code → token exchange (`MetaGraphClient::exchangeCode`) → **`subscribeApp` (m.29'un kritik
+   `subscribed_apps` adımı otomatik)** → `TokenCipher` ile şifreleme →
+   `TenantRepository::connectWhatsApp` (UNIQUE ihlalinde `409 phone_number_in_use`).
+   Panelde FB SDK + `FB.login(config_id)` akışı, popup `message` event'inden
+   `waba_id`/`phone_number_id` yakalama, `.env`'e `META_APP_ID`/`META_ES_CONFIG_ID`.
+   Doğrulama: 422 eksik alan, sahte code ile gerçek Meta hatası (`Invalid verification code
+   format`) 502 `step:exchange_code` olarak yüzeye çıktı; config ID boşken buton yönlendirme
+   uyarısı gösteriyor (tarayıcıda doğrulandı). **Gerçek popup akışı için Meta Dashboard'da
+   Facebook Login for Business config ID oluşturulup `.env META_ES_CONFIG_ID`'ye yazılmalı.**
+4. **n8n reschedule tek çağrı** (BACKLOG m.22'nin n8n yarısı) — `01_incoming...`'de yeni
+   `Is Reschedule (slot)?` + `Patch Reschedule Appointment` (PATCH `/appointments/{id}/reschedule`)
+   node'ları; eski `Is Reschedule?` + `Patch Cancel Old Appointment` (cancel+yeni-kayıt deseni)
+   kaldırıldı. Reschedule başarısında müşteriye "Randevunuz ... saatine tasindi." metni + state
+   `idle` (onay döngüsü tekrarlanmaz); 409 mevcut retry-availability döngüsüne düşer. REST
+   PATCH+activate ile canlı n8n'e (v2.28.6) yüklendi, imzalı webhook simülasyonuyla uçtan uca
+   doğrulandı: aynı randevu ID yerinde taşındı, yeni satır yok, state idle, bilgi metni Meta'dan
+   gerçekten `sent`.
+5. **Saat dilimi düzeltmesi (testte yakalanan gerçek hata)** — n8n slot `start_time`'ı ofsetsiz
+   gidiyordu; PHP (XAMPP `date.timezone=Europe/Berlin`) 1 saat kaydırıyordu. Panelin PHASE_17
+   kararıyla aynı sabit `+03:00` ofseti `Sign: Post Appointment`'a eklendi; ikinci e2e testte
+   slot 14:30 → DB `14:30+03` birebir doğrulandı. (Create yolunu da düzeltir — hata reschedule'a
+   özgü değildi, öteden beri vardı.)
+6. **n8n queue mode** (BACKLOG m.16'nın kalan yarısı) — karar: tek instance yeterli, gerçek
+   ölçekleme ihtiyacına kadar kurulmayacak; geçiş reçetesi (Redis, `N8N_EXECUTIONS_MODE=queue`,
+   worker env'leri, SQLite→Postgres, advisory lock'ların çift gönderimi zaten engellediği)
+   `n8n/README.md`'ye "Queue mode" bölümü olarak yazıldı.
+
+Test verileri (geçici müşteri, randevu, message_log, conversation_state) oturum sonunda
+temizlendi. Migration 0005 gerçek DB'ye uygulandı (pg_hba geçici trust yöntemi, sonra geri
+alındı ve doğrulandı).
+
+**STATUS: PHASE_32_ALL_BACKLOG_ITEMS_CLOSED**

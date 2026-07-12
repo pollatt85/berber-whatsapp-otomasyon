@@ -41,6 +41,7 @@ use App\Http\Controllers\StaffController;
 use App\Http\Controllers\StaffScheduleController;
 use App\Http\Controllers\TenantResolutionController;
 use App\Http\Controllers\WhatsAppInternalController;
+use App\Http\Controllers\WhatsAppFlowController;
 use App\Http\Controllers\WhatsAppWebhookController;
 use App\Http\Middleware\PlatformAdminAuthMiddleware;
 use App\Http\Middleware\ServiceHmacMiddleware;
@@ -71,6 +72,7 @@ use App\Support\LlmClient;
 use App\Support\MetaGraphClient;
 use App\Support\RateLimiter;
 use App\Support\RedisClient;
+use App\Support\WhatsAppNotifier;
 use App\Panel\PanelView;
 use App\Http\Router;
 
@@ -122,6 +124,19 @@ $router->post('/webhook/whatsapp', function (Request $req) {
     $db = Connection::service();
     $controller = new WhatsAppWebhookController(new WebhookEventRepository($db), new TenantRepository($db));
     return $controller->receive($req);
+});
+
+// --- WhatsApp Flows data-exchange (randevu formu, PHASE_35) — HMAC yok, Meta'nın kendi
+// RSA/AES şifrelemesi kimlik doğrulamayı sağlıyor (FlowCrypto). ---
+$router->post('/webhook/whatsapp-flow', function (Request $req) {
+    $db = Connection::service();
+    $controller = new WhatsAppFlowController(
+        new ServiceRepository($db),
+        new StaffRepository($db),
+        new AvailabilityService(new ServiceRepository($db), new StaffRepository($db), new AppointmentRepository($db)),
+        new TenantRepository($db)
+    );
+    return $controller->handle($req);
 });
 
 // --- Platform admin route grubu (09§5/§6, BYPASSRLS, tenant'tan bağımsız) ---
@@ -335,6 +350,27 @@ $router->post('/messages/templates/sync', $tenantScoped(fn ($db) => function (Re
     return $controller->syncTemplates($r, $tid);
 }));
 
+// WhatsApp bağlantı/health uçları (05§1, BACKLOG m.17/25/29) — panel JWT kanalı; token
+// çözümü/yazımı BYPASSRLS istediği için controller service bağlantısıyla kurulur
+// (/messages/templates/sync sarmalayıcısıyla aynı desen).
+$whatsAppInternal = function () {
+    $sdb = Connection::service();
+    return new WhatsAppInternalController(
+        new TenantRepository($sdb),
+        new CustomerRepository($sdb),
+        new MessageLogRepository($sdb),
+        new MessageTemplateRepository($sdb),
+        new MetaGraphClient()
+    );
+};
+
+$router->get('/settings/whatsapp/health', $tenantScoped(fn ($db) => function (Request $r, string $tid) use ($whatsAppInternal) {
+    return $whatsAppInternal()->health($r, $tid);
+}));
+$router->post('/settings/whatsapp/connect', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a, string $role) use ($whatsAppInternal) {
+    return $whatsAppInternal()->connect($r, $tid, $role);
+}));
+
 $router->post('/settings/logo', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a, string $role) use ($db) {
     return (new SettingsController(new TenantSettingsRepository($db)))->uploadLogo($r, $tid, $a, $role);
 }));
@@ -380,11 +416,23 @@ $router->get('/appointments', $tenantScoped(fn ($db) => function (Request $r, st
 $router->post('/appointments', $tenantScoped(fn ($db) => function (Request $r, string $tid) use ($db) {
     return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db)))->store($r, $tid);
 }));
-$router->patch('/appointments/{id}/confirm', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a) use ($db) {
-    return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db)))->confirm($r, $tid, $a['id']);
+$appointmentNotifier = fn ($db) => new WhatsAppNotifier(
+    new TenantRepository(Connection::service()),
+    new CustomerRepository($db),
+    new MessageLogRepository($db),
+    new MetaGraphClient(),
+    new AvailabilityService(new ServiceRepository($db), new StaffRepository($db), new AppointmentRepository($db)),
+    new ConversationStateRepository(Connection::service())
+);
+
+$router->patch('/appointments/{id}/confirm', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a, string $role) use ($db, $appointmentNotifier) {
+    return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db), $appointmentNotifier($db)))->confirm($r, $tid, $a['id'], $role);
 }));
-$router->patch('/appointments/{id}/cancel', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a) use ($db) {
-    return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db)))->cancel($r, $tid, $a['id']);
+$router->patch('/appointments/{id}/cancel', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a, string $role) use ($db, $appointmentNotifier) {
+    return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db), $appointmentNotifier($db)))->cancel($r, $tid, $a['id'], $role);
+}));
+$router->patch('/appointments/{id}/request-reschedule', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a) use ($db, $appointmentNotifier) {
+    return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db), $appointmentNotifier($db)))->requestReschedule($r, $tid, $a['id']);
 }));
 $router->patch('/appointments/{id}/complete', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a) use ($db) {
     return (new AppointmentController(new AppointmentRepository($db), new ServiceRepository($db), new CustomerRepository($db)))->complete($r, $tid, $a['id']);

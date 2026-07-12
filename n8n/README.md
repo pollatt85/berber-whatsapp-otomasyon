@@ -101,12 +101,15 @@ sabitlemek de bir secenek.
 
 ## Bilincli basitlestirmeler / bilinen sinirlar
 
-1. **Reschedule = cancel + yeni appointment.** Backend'de yer degistirme yapan bir
-   "in-place update" ucu yok (yalnizca `confirm`/`cancel` var). `reschedule_<id>|<service>|<staff>`
-   akisi: yeni slot secilince once `POST /appointments` (yeni kayit), sonra
-   `PATCH /appointments/{eski_id}/cancel`. Fonksiyonel olarak dogru ama randevu ID'si degisir.
-   Gelecekte gercek bir `PATCH /appointments/{id}/reschedule` ucu eklenirse bu iki adim tek
-   cagriya indirilebilir (BACKLOG'a not dusuldu).
+1. **Reschedule = tek cagri, in-place (PHASE_32'de guncellendi).** Yeni slot secilince
+   `state_context.reschedule_of` doluysa `Is Reschedule (slot)?` If'i akisi
+   `PATCH /appointments/{id}/reschedule` (PHASE_27 ucu) cagiran `Patch Reschedule Appointment`
+   node'una yonlendirir: randevu ID'si degismez, durum korunur, musteri "Randevunuz ...
+   saatine tasindi." metniyle bilgilendirilir ve state `idle`'a doner (yeni onay dongusu
+   baslatilmaz — randevu zaten pending/confirmed). 409 `slot_taken` yaniti mevcut
+   `If Slot Taken` -> `Slot Taken -> Retry Availability` dongusune duser (create ile ortak).
+   Eski cancel+yeni-appointment iki-adimli deseni kaldirildi. Gercek n8n + Backend + Postgres
+   ile ucta uca dogrulandi (ayni id, yerinde time_range guncellemesi, state idle).
 2. **`GET /availability` gunluk** — 04§3'un "bugun..+7gun" istegi icin Backend tek `date`
    parametresi aliyor; n8n 7 gunu tek tek sorgulayip (`Prepare Availability Query...` -> tek
    `staff_id` icin 7 item) sonuclari `Aggregate & Build Slots Msg`'de birlestiriyor. "Farketmez"
@@ -114,11 +117,12 @@ sabitlemek de bir secenek.
    personelleri ayni anda tarayan bir carpimsal (staff x gun) sorgu bilerek yapilmadi (cagri
    sayisini sisirmemek icin); ileride gerekirse `prep_avail_staff` node'u tum `staff_ids` icin
    dongu yapacak sekilde genisletilebilir.
-3. **Slot secim ve randevu olusturma saat dilimi.** `start_time` = `<tarih>T<saat>:00`,
-   tenant timezone offset'i eklenmez (PHP `DateTimeImmutable` sunucu varsayilan saat dilimini
-   kullanir). Cogu kurulumda `Europe/Istanbul` sunucu saatiyle ayni oldugu icin pratikte sorun
-   cikmaz, ama tam dogruluk icin ileride n8n'in tenant timezone'unu ayrica sorgulayip ISO
-   offset eklemesi onerilir.
+3. **Slot secim ve randevu olusturma saat dilimi (PHASE_32'de duzeltildi).** `start_time`
+   artik sabit `+03:00` ofsetiyle gonderilir (`<tarih>T<saat>:00+03:00`) — panelin PHASE_17
+   karariyla ayni "TR kalici UTC+3" varsayimi. Onceki ofsetsiz deger PHP'nin sunucu varsayilan
+   saat dilimiyle yorumlaniyordu; bu makinede (XAMPP `date.timezone=Europe/Berlin`) randevular
+   1 saat kayiyordu (gercek n8n testinde yakalandi). Tenant timezone'u Istanbul disina cikarsa
+   `Sign: Post Appointment` node'undaki ofset tenant'tan okunacak sekilde genisletilmeli.
 4. **HMAC imza dogrulama Code node'da `Options.rawBody: true` gerektirir** (`Webhook` node) —
    **PHASE_14'te gercek n8n'e karsi dogrulandi ve duzeltildi.** `rawBody: true` olsa bile
    `$json.body` HER ZAMAN parse edilmis JSON objesidir, asla ham string degildir. Ham govde
@@ -151,3 +155,32 @@ n8n UI > Workflows > Import from File > her JSON'u ayri ayri yukleyin. Import so
 2. `Webhook` node'unun URL'ini kopyalayip Backend `.env`'inde `N8N_INCOMING_WEBHOOK_URL`'e yazin.
 3. Her workflow'u once **test modda** (Execute Workflow) calistirip Code/HTTP node'larini
    tek tek acarak dogrulayin, sonra **Active** yapin.
+
+## Queue mode (olcekleme — BACKLOG SA m.16'nin kalan yarisi, PHASE_32'de belgelendi)
+
+Su an n8n **tek instance, `regular` execution modunda** calisiyor ve mevcut yuk icin yeterli
+(karar: gercek olcekleme ihtiyaci dogana kadar queue mode KURULMAZ; bu bolum o gun icin
+recete olarak yazildi).
+
+Queue mode'a gecis gerektiginde (cok tenant + yogun webhook trafigi, tek surecin yetmedigi
+durum):
+
+1. **Redis zorunlu** — proje zaten rate limit sayaclari icin portable bir Redis calistiriyor
+   (`redis/` klasoru, `.claude/launch.json` icindeki `redis` config'i, `.env`'deki
+   `REDIS_HOST`/`REDIS_PORT`). Ayni instance kuyruk deposu olarak kullanilabilir (uretimde
+   ayri bir Redis onerilir).
+2. **Ana surec (webhook alici + zamanlayici):**
+   `N8N_EXECUTIONS_MODE=queue`, `QUEUE_BULL_REDIS_HOST`, `QUEUE_BULL_REDIS_PORT` ortam
+   degiskenleriyle `n8n start`.
+3. **Worker surecleri:** ayni ortam degiskenleriyle `n8n worker` (istenen sayida kopya).
+   Workerlar da Code node'lari calistirdigi icin `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`,
+   `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `BACKEND_BASE_URL`, `N8N_SERVICE_SECRET`
+   degiskenlerini AYNEN almali (bkz. "Gerekli n8n ortam degiskenleri").
+4. **SQLite -> Postgres:** queue mode'da workflow/execution deposu olarak SQLite onerilmez;
+   `DB_TYPE=postgresdb` + `DB_POSTGRESDB_*` degiskenleriyle mevcut PostgreSQL'e (ayri bir
+   veritabani, ör. `n8n_meta`) tasinmali. Workflow'lar `n8n export:workflow` /
+   `import:workflow` ile tasinir.
+5. **Cron mutex etkilenmez** — 02/03/04 tarama workflow'larinin claim'leri zaten Backend'de
+   Postgres advisory lock + atomik `UPDATE...RETURNING` ile yapiliyor (BACKLOG m.5/15/26);
+   birden fazla worker ayni taramayi calistirirsa bile cift gonderim olmaz (idempotency_key
+   ayrica koruyor).

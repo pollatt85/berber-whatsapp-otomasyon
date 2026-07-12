@@ -66,6 +66,32 @@ final class TenantRepository
     }
 
     /**
+     * Embedded Signup (05_WhatsApp_Integration.md §1 adım 3): token exchange + subscribed_apps
+     * başarıyla tamamlandıktan sonra tenant'ın Meta kimlikleri tek seferde yazılır.
+     * $encryptedTokenHex, TokenCipher::encrypt çıktısının bin2hex'i — bytea'ya decode ile girer
+     * (findByIdWithToken'ın encode(...,'hex') okumasının simetriği).
+     */
+    public function connectWhatsApp(string $tenantId, string $phoneNumberId, string $wabaId, string $encryptedTokenHex): ?array
+    {
+        $stmt = $this->service->prepare(
+            "UPDATE tenants
+             SET phone_number_id = :phone_number_id, waba_id = :waba_id,
+                 access_token_encrypted = decode(:token_hex, 'hex'),
+                 whatsapp_status = 'connected', updated_at = now()
+             WHERE id = :id
+             RETURNING id, business_name, phone_number_id, waba_id, whatsapp_status"
+        );
+        $stmt->execute([
+            'phone_number_id' => $phoneNumberId,
+            'waba_id' => $wabaId,
+            'token_hex' => $encryptedTokenHex,
+            'id' => $tenantId,
+        ]);
+
+        return $stmt->fetch() ?: null;
+    }
+
+    /**
      * 09_SaaS_Deployment.md §5, §6: platform admin route grubu — tüm tenant'ların özet listesi.
      */
     public function listAll(): array

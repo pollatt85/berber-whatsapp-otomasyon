@@ -233,6 +233,7 @@ async function loadAppointments() {
     const actions = [];
     if (a.status === 'pending') {
       actions.push('<button class="btn btn-sm btn-success" onclick="act(\'' + a.id + '\',\'confirm\')" title="Onayla"><i class="bi bi-check-lg"></i></button>');
+      actions.push('<button class="btn btn-sm btn-outline-warning" onclick="act(\'' + a.id + '\',\'request-reschedule\')" title="Yeni Saat İste (müşteriye WhatsApp\'tan saat listesi gönderir)"><i class="bi bi-clock-history"></i></button>');
     }
     if (a.status === 'confirmed') {
       actions.push('<button class="btn btn-sm btn-primary" onclick="act(\'' + a.id + '\',\'complete\')" title="Tamamlandı"><i class="bi bi-check2-all"></i></button>');

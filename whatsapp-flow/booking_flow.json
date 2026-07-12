@@ -1,0 +1,200 @@
+{
+  "version": "7.1",
+  "data_api_version": "3.0",
+  "routing_model": {
+    "SERVICES": ["STAFF"],
+    "STAFF": ["SLOT"],
+    "SLOT": []
+  },
+  "screens": [
+    {
+      "id": "SERVICES",
+      "title": "Hizmet Seç",
+      "terminal": false,
+      "data": {
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          },
+          "__example__": [
+            { "id": "svc_1", "title": "Saç Kesimi", "description": "30 dk - 350.00 TL" }
+          ]
+        },
+        "reschedule_of": { "type": "string", "__example__": "" }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "💈 Randevu Al"
+          },
+          {
+            "type": "Form",
+            "name": "services_form",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "service_id",
+                "label": "Hangi hizmeti almak istersiniz?",
+                "required": true,
+                "data-source": "${data.services}"
+              },
+              {
+                "type": "Footer",
+                "label": "Devam Et",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "screen": "SERVICES",
+                    "service_id": "${form.service_id}",
+                    "reschedule_of": "${data.reschedule_of}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "STAFF",
+      "title": "Usta Seç",
+      "terminal": false,
+      "data": {
+        "service_id": { "type": "string", "__example__": "svc_1" },
+        "reschedule_of": { "type": "string", "__example__": "" },
+        "staff": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          },
+          "__example__": [{ "id": "staff_1", "title": "Ahmet Usta" }]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "✂️ Hangi ustamızdan hizmet almak istersiniz?"
+          },
+          {
+            "type": "Form",
+            "name": "staff_form",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "staff_id",
+                "label": "Personel",
+                "required": true,
+                "data-source": "${data.staff}"
+              },
+              {
+                "type": "Footer",
+                "label": "Devam Et",
+                "on-click-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "screen": "STAFF",
+                    "service_id": "${data.service_id}",
+                    "staff_id": "${form.staff_id}",
+                    "reschedule_of": "${data.reschedule_of}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "SLOT",
+      "title": "Saat Seç",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "service_id": { "type": "string", "__example__": "svc_1" },
+        "staff_id": { "type": "string", "__example__": "staff_1" },
+        "reschedule_of": { "type": "string", "__example__": "" },
+        "min_date": { "type": "string", "__example__": "2026-07-14" },
+        "max_date": { "type": "string", "__example__": "2026-07-20" },
+        "times": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          },
+          "__example__": [{ "id": "09:00", "title": "09:00" }]
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "🗓️ Sizin için uygun gün ve saat"
+          },
+          {
+            "type": "Form",
+            "name": "slot_form",
+            "children": [
+              {
+                "type": "DatePicker",
+                "name": "date",
+                "label": "Tarih",
+                "required": true,
+                "min-date": "${data.min_date}",
+                "max-date": "${data.max_date}",
+                "on-select-action": {
+                  "name": "data_exchange",
+                  "payload": {
+                    "screen": "SLOT",
+                    "service_id": "${data.service_id}",
+                    "staff_id": "${data.staff_id}",
+                    "reschedule_of": "${data.reschedule_of}",
+                    "date": "${form.date}"
+                  }
+                }
+              },
+              {
+                "type": "RadioButtonsGroup",
+                "name": "time",
+                "label": "Saat",
+                "required": true,
+                "data-source": "${data.times}"
+              },
+              {
+                "type": "Footer",
+                "label": "✅ Onayla ve Gönder",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "service_id": "${data.service_id}",
+                    "staff_id": "${data.staff_id}",
+                    "reschedule_of": "${data.reschedule_of}",
+                    "date": "${form.date}",
+                    "time": "${form.time}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

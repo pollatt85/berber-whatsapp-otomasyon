@@ -1,6 +1,9 @@
 # --- Sırlar / ortam (ASLA commit edilmez; .env.example commit'lenir) ---
 .env
 
+# --- WhatsApp Flows RSA private key (ASLA commit edilmez) ---
+/secrets/*.pem
+
 # --- Composer bağımlılıkları (composer.json/lock commit'lenir, vendor yeniden üretilir) ---
 /vendor/
 

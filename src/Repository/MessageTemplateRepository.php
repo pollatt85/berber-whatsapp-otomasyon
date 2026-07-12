@@ -65,21 +65,22 @@ final class MessageTemplateRepository
      * durumu güncellenir; Meta'da yeni görülen ama yerelde henüz bilinmeyen şablon, sonradan
      * panelden kategorize edilmek üzere `template_type='other'` ile oluşturulur.
      */
-    public function upsertFromSync(string $tenantId, string $metaTemplateName, bool $active): array
+    public function upsertFromSync(string $tenantId, string $metaTemplateName, bool $active, string $language = 'tr'): array
     {
         $existing = $this->findByMetaName($tenantId, $metaTemplateName);
         if ($existing !== null) {
             $stmt = $this->db->prepare(
-                'UPDATE message_templates SET active = :active WHERE tenant_id = :tenant_id AND id = :id RETURNING *'
+                'UPDATE message_templates SET active = :active, language = :language
+                 WHERE tenant_id = :tenant_id AND id = :id RETURNING *'
             );
-            $stmt->execute(['active' => $active, 'tenant_id' => $tenantId, 'id' => $existing['id']]);
+            $stmt->execute(['active' => $active, 'language' => $language, 'tenant_id' => $tenantId, 'id' => $existing['id']]);
 
             return $stmt->fetch();
         }
 
         $stmt = $this->db->prepare(
-            "INSERT INTO message_templates (tenant_id, internal_name, meta_template_name, template_type, active)
-             VALUES (:tenant_id, :internal_name, :meta_name, 'other', :active)
+            "INSERT INTO message_templates (tenant_id, internal_name, meta_template_name, template_type, active, language)
+             VALUES (:tenant_id, :internal_name, :meta_name, 'other', :active, :language)
              RETURNING *"
         );
         $stmt->execute([
@@ -87,6 +88,7 @@ final class MessageTemplateRepository
             'internal_name' => $metaTemplateName,
             'meta_name' => $metaTemplateName,
             'active' => $active,
+            'language' => $language,
         ]);
 
         return $stmt->fetch();

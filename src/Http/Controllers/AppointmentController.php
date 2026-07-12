@@ -10,6 +10,7 @@ use App\Http\Response;
 use App\Repository\AppointmentRepository;
 use App\Repository\CustomerRepository;
 use App\Repository\ServiceRepository;
+use App\Support\WhatsAppNotifier;
 use DateInterval;
 use DateTimeImmutable;
 use PDOException;
@@ -27,7 +28,8 @@ final class AppointmentController
     public function __construct(
         private AppointmentRepository $appointments,
         private ServiceRepository $services,
-        private CustomerRepository $customers
+        private CustomerRepository $customers,
+        private ?WhatsAppNotifier $notifier = null
     ) {
     }
 
@@ -111,22 +113,75 @@ final class AppointmentController
         return Response::json(['data' => $appointment], 201);
     }
 
-    public function confirm(Request $request, string $tenantId, string $id): Response
+    /**
+     * $role='service' iken bildirim gönderilmez — bu durumda çağıran n8n'dir (müşteri
+     * WhatsApp'tan Onayla/İptal'e bastığında) ve n8n zaten kendi "Randevunuz onaylandı/iptal
+     * edildi" mesajını ayrı bir adımda gönderiyor (`Build Confirm Msg`/`Build Cancel Msg`).
+     * Bildirim yalnızca panelden (owner/manager) yapılan işlemlerde tetiklenir — aksi halde
+     * müşteriye aynı bilgi iki kez giderdi.
+     */
+    public function confirm(Request $request, string $tenantId, string $id, string $role = 'owner'): Response
     {
         $appointment = $this->appointments->transition($tenantId, $id, "'pending'", 'confirmed');
         if ($appointment === null) {
             throw new ApiException('validation_error', 'Appointment not found or not in a confirmable state.', 422);
         }
 
+        if ($role !== 'service') {
+            $this->notifier?->notifyAppointment(
+                $tenantId,
+                $appointment['customer_id'],
+                $appointment['id'],
+                "✅ *Randevunuz onaylandı:* {$this->appointmentStartLabel($appointment)}. Sizi bekliyoruz! 💈"
+            );
+        }
+
         return Response::json(['data' => $appointment]);
     }
 
-    public function cancel(Request $request, string $tenantId, string $id): Response
+    public function cancel(Request $request, string $tenantId, string $id, string $role = 'owner'): Response
     {
         $appointment = $this->appointments->transition($tenantId, $id, "'pending','confirmed'", 'cancelled');
         if ($appointment === null) {
             throw new ApiException('validation_error', 'Appointment not found or already in a terminal state.', 422);
         }
+
+        if ($role !== 'service') {
+            $this->notifier?->notifyAppointment(
+                $tenantId,
+                $appointment['customer_id'],
+                $appointment['id'],
+                "❌ Randevunuz iptal edildi: {$this->appointmentStartLabel($appointment)}."
+            );
+        }
+
+        return Response::json(['data' => $appointment]);
+    }
+
+    /**
+     * İşletme pending bir randevunun saatini uygun bulmayınca panelden tetiklenir (PHASE_35):
+     * randevu durumu değişmez (hâlâ pending), müşteriye aynı personel+hizmetle önceden
+     * doldurulmuş (bkz. `WhatsAppNotifier::sendFlowTrigger` notu) WhatsApp Flows randevu formu
+     * yeniden gönderilir. Form tamamlanınca n8n'in yeni `flow_submitted` route'u devreye girer.
+     */
+    public function requestReschedule(Request $request, string $tenantId, string $id): Response
+    {
+        $appointment = $this->appointments->find($tenantId, $id);
+        if ($appointment === null || $appointment['status'] !== 'pending') {
+            throw new ApiException('validation_error', 'Appointment not found or not pending.', 422);
+        }
+
+        $this->notifier?->sendFlowTrigger(
+            $tenantId,
+            $appointment['customer_id'],
+            $appointment['id'],
+            "😔 Seçtiğiniz saat şu anda uygun değil. Aşağıdan yeni bir randevu saati seçebilir misiniz?",
+            [
+                'service_id' => $appointment['service_id'],
+                'staff_id' => $appointment['staff_id'],
+                'reschedule_of' => $appointment['id'],
+            ]
+        );
 
         return Response::json(['data' => $appointment]);
     }
@@ -201,5 +256,15 @@ final class AppointmentController
     private function sqlState(PDOException $e): ?string
     {
         return is_array($e->errorInfo) ? ($e->errorInfo[0] ?? null) : null;
+    }
+
+    /** `time_range` (tstzrange metni, ör. `["2026-07-14 09:15:00+03",...)`) başlangıcını "gg.aa.yyyy ss:dd" biçiminde döner. */
+    private function appointmentStartLabel(array $appointment): string
+    {
+        if (!preg_match('/\["([^"]+)"/', (string) ($appointment['time_range'] ?? ''), $m)) {
+            return '';
+        }
+
+        return (new DateTimeImmutable($m[1]))->format('d.m.Y H:i');
     }
 }

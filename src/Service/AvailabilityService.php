@@ -39,6 +39,28 @@ final class AvailabilityService
     }
 
     /**
+     * `slotsFor()`'un N gün için tek çağrıda topladığı hali (03_Backend_API.md §3.3, PHASE_35).
+     * n8n'in eskiden gün başına ayrı bir HTTP round-trip yaptığı yerde (7 gün = 7 çağrı) artık
+     * tek istekte tüm günler döner — personel seçiminden saat listesine geçişteki gecikmenin
+     * kök nedeniydi.
+     *
+     * @return array<string, string[]> tarih (YYYY-MM-DD) => "HH:MM" slot listesi
+     */
+    public function slotsForRange(string $tenantId, string $staffId, string $serviceId, string $startDate, int $days, string $timezone): array
+    {
+        $tz = new DateTimeZone($timezone);
+        $cursor = new DateTimeImmutable("{$startDate} 00:00:00", $tz);
+
+        $result = [];
+        for ($i = 0; $i < $days; $i++) {
+            $date = $cursor->modify("+{$i} day")->format('Y-m-d');
+            $result[$date] = $this->slotsFor($tenantId, $staffId, $serviceId, $date, $timezone);
+        }
+
+        return $result;
+    }
+
+    /**
      * @return string[] "HH:MM" formatında uygun slot başlangıçları
      */
     public function slotsFor(string $tenantId, string $staffId, string $serviceId, string $date, string $timezone): array

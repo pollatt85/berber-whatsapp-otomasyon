@@ -8,19 +8,119 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 ## Genel Durum
 
 - Dokümantasyon fazı (00-09): ✅ tamamlandı (9/9).
-- Kodlama fazı: 🟡 devam ediyor. Backend + n8n + panel + AI (Gemini) + Redis rate limit +
+- **Kodlama fazı: ✅ PHASE_32 itibarıyla BACKLOG'daki TÜM açık maddeler kapandı** (şablon dili,
+  tier uyarı alanı, Embedded Signup, n8n tek-çağrı reschedule, queue mode kararı). **PHASE_33'te
+  Meta ES config ID oluşturuldu + FB.login `extras` düzeltmesi yapıldı** (detay: "Sonraki Oturum
+  İçin Öncelik Sırası" madde 1). Kalan tek adım: pilot fazı (08_Test_Pilot.md) — gerçek
+  işletmeyle saha çalışması, kod tarafında bekleyen yok.
+- Önceki durum özeti: 🟡 devam ediyordu. Backend + n8n + panel + AI (Gemini) + Redis rate limit +
   kampanya gönderimi + inbound log fix + akış-ortası AI yönlendirmesi + reschedule ucu +
   Apache dev vhost'u + Postgres Windows servisi hepsi tamamlandı (PHASE_14-28). **PHASE_30'da
   eski Meta hesap kilidi tamamen atlatıldı**: kilitli WABA (`Bomonti Berber` portföyü) terk
   edildi, YENİ bir portföy/App/WABA (`Test Berber 2` / `BerberApp` / WABA
   `1359511886136495`, phone_number_id `1147876331751351`) üzerinden **backend'in kendi
   `/internal/whatsapp/send` ucu gerçek bir WhatsApp mesajını gerçek bir telefona uçtan uca
-  teslim etti** (kullanıcı tarafından WhatsApp ekran görüntüsüyle doğrulandı). Kalan açık:
-  Embedded Signup panele kodlanması (madde 25'in geri kalanı) + n8n queue mode (madde 16,
-  yalnızca ölçekleme aşamasında, dokunulmadı) + backend'in şablon dili sabit `tr` olması
-  (yalnızca `en_US` onaylı şablonlarla çakışıyor, aşağıda not).
+  teslim etti** (kullanıcı tarafından WhatsApp ekran görüntüsüyle doğrulandı). **PHASE_31'de
+  webhook bağlantısı tamamlandı:** ngrok tüneli + Meta App'te callback URL/verify token +
+  WABA'nın app'e abone edilmesi (`subscribed_apps` — Embedded Signup dışı bağlantıların atladığı
+  kritik bir adım) + n8n restart edilerek **gerçek bir gelen WhatsApp mesajı uçtan uca menüye
+  kadar doğrulandı** (kullanıcı telefonunda gerçek yanıtı gördü). Kalan açık: Embedded Signup
+  panele kodlanması (madde 25'in geri kalanı, artık `subscribed_apps` adımını da içermeli) +
+  n8n queue mode (madde 16, yalnızca ölçekleme aşamasında, dokunulmadı) + backend'in şablon
+  dili sabit `tr` olması (yalnızca `en_US` onaylı şablonlarla çakışıyor, aşağıda not).
 
-## Bu Oturumda Yapılanlar (PHASE_30 — Ev laptopunda sıfırdan ortam kurulumu + yeni WABA ile gerçek teslimat)
+## Bu Oturumda Yapılanlar (PHASE_32 — Kalan tüm BACKLOG maddeleri)
+
+Hedef: kullanıcı talebi "kalan tüm maddeleri bir kerede bitir". Tümü gerçek Postgres + gerçek
+Meta WABA + canlı n8n'e karşı doğrulandı; detaylar CHANGELOG PHASE_32'de. Özet:
+
+1. **Şablon dili** — `migrations/0005` (`message_templates.language`), sync Meta'dan dili
+   saklar, `send()` istek>DB>'tr' önceliği. **İlk gerçek `type=template` teslimatı:**
+   `hello_world` (`en_US`) gerçek telefona `sent` + gerçek `wamid`. Migration, superuser
+   şifresi bilinmediği için pg_hba geçici `trust` yöntemiyle (PHASE_30 deseni) uygulandı,
+   hemen geri alınıp doğrulandı.
+2. **Tier/kalite alanı (m.17)** — `GET /settings/whatsapp/health` + panel kartı; gerçek veriyle
+   tarayıcıda doğrulandı (GREEN / TIER_250 / düşük kademe uyarısı).
+3. **Embedded Signup (m.25+m.29)** — `POST /settings/whatsapp/connect`: code exchange →
+   **`subscribed_apps` otomatik** → şifreli token kaydı (`connectWhatsApp`), 409
+   `phone_number_in_use`; panelde FB SDK + `FB.login(config_id)` + popup message event.
+   `.env`/`.env.example`'a `META_APP_ID` (4440759482837118) + `META_ES_CONFIG_ID` (boş —
+   kullanıcı Meta Dashboard'dan oluşturacak). Sahte code ile gerçek Meta hata yolu test edildi.
+4. **n8n tek-çağrı reschedule (m.22)** — cancel+yeni-kayıt yerine `PATCH .../reschedule`;
+   REST PATCH+activate ile canlı n8n'e yüklendi (yeni versionId publish edildi), imzalı webhook
+   simülasyonuyla iki kez uçtan uca doğrulandı. Müşteriye "tasindi" metni + state idle.
+5. **Saat dilimi hatası bulundu ve düzeltildi** — slot `start_time` ofsetsizdi; XAMPP PHP
+   `date.timezone=Europe/Berlin` olduğu için randevular 1 saat kayıyordu (create yolu dahil,
+   öteden beri). Panel PHASE_17 kararıyla aynı sabit `+03:00` n8n'e eklendi; 14:30 → `14:30+03`
+   birebir doğrulandı.
+6. **Queue mode kararı (m.16)** — kurulmayacak (tek instance yeterli); geçiş reçetesi
+   `n8n/README.md` "Queue mode" bölümüne yazıldı.
+7. Test verileri temizlendi (geçici müşteri/randevu/log/state). Ortam: backend 8000 + ngrok +
+   n8n bu oturum başında arka planda başlatıldı, açık bırakıldı.
+
+## Önceki Oturum (PHASE_31 — Webhook bağlantısı + n8n ile uçtan uca ilk gerçek gelen mesaj)
+
+Hedef: BACKLOG §A madde 25'in kalan parçası — Meta'nın yeni WABA (`1359511886136495`) için
+inbound webhook'unu backend'e bağlamak ve n8n akışını gerçek trafikle doğrulamak (PHASE_30
+yalnızca giden mesajı doğrulamıştı).
+
+1. **ngrok tüneli kuruldu** — winget'in kurduğu `Ngrok.Ngrok` paketi (3.3.1) hesabın minimum
+   sürüm şartını (3.20.0+) karşılamadığı için `ERR_NGROK_121` ile reddedildi; güncel binary
+   (`v3.39.9`) doğrudan `bin.equinox.io`'dan indirilip `C:\Users\Lenovo-Thinkpad-E560\ngrok\`
+   altına kuruldu. Kullanıcı kendi ngrok hesabını (Google SSO) açtı, authtoken'ı Claude in
+   Chrome ile okundu (hesap oluşturma/şifre girme kurallar gereği kullanıcı tarafından
+   yapıldı). Sabit ücretsiz alan adı `https://provider-dislodge-bounce.ngrok-free.dev` →
+   `localhost:8000` yönlendiriyor.
+2. **`META_APP_SECRET` dolduruldu** — önceki oturumlardan beri `.env`'de boştu (`webhook`
+   POST imza doğrulaması `Env::required('META_APP_SECRET')` ile çöküyordu). BerberApp'in
+   Meta Dashboard'daki Settings > Basic sayfasından (kullanıcı kendi Facebook şifresini
+   tekrar onayladı) gerçek App Secret alınıp `.env`'e yazıldı.
+3. **Webhook GET/POST doğrulama tünel üzerinden test edildi** — `hub.challenge` echo edildi
+   (200), doğru HMAC imzalı POST 200 (yanlış imza 403). PHP built-in server .env'i her
+   istekte yeniden okuduğu için restart gerekmedi.
+4. **Meta App Dashboard'da webhook yapılandırıldı** (Step 2. Production setup > Configure
+   Webhooks): Callback URL = ngrok URL + `/webhook/whatsapp`, Verify token = `.env`'deki
+   `WEBHOOK_VERIFY_TOKEN`. "Verify and save" başarılı (yeşil tik), `messages` alanı zaten
+   otomatik abone edilmiş durumdaydı.
+5. **Kritik bulgu — WABA app'e abone değildi:** callback URL/verify token App düzeyinde
+   doğru ayarlanmasına rağmen kullanıcının attığı gerçek test mesajı hiç ulaşmadı (ngrok
+   inspector'da yalnızca kendi curl testlerim görünüyordu, Meta'dan gerçek istek yok). Kök
+   neden: `GET /{waba-id}/subscribed_apps` (System User token ile) WABA'nın yalnızca Meta'nın
+   kendi varsayılan `WA DevX Webhook Events 1P App`'ine (id `2202427980234937`) abone
+   olduğunu, **BerberApp'e (`4440759482837118`) hiç abone olmadığını** gösterdi — bu, WABA'nın
+   Embedded Signup akışı yerine doğrudan Business Settings > System User ile bağlanmasının
+   (PHASE_30) bir yan etkisiydi. **Düzeltme:** `POST /{waba-id}/subscribed_apps` (aynı System
+   User token'ıyla) çağrılıp BerberApp WABA'ya abone edildi (`{"success":true}`); tek seferlik
+   PHP scriptleriyle yapıldı (`TokenCipher::decrypt` + Graph API), scriptler iş bitince
+   silindi. Bu adım BACKLOG'a **madde 29** olarak eklendi (aşağıya not düşüldü) çünkü Embedded
+   Signup panele kodlanırken bu abonelik adımı da otomatik yapılmalı.
+6. **n8n bu makinede yeniden başlatıldı** (`n8n start`, `BACKEND_BASE_URL`/`N8N_SERVICE_SECRET`/
+   `NODE_FUNCTION_ALLOW_BUILTIN=crypto`/`N8N_BLOCK_ENV_ACCESS_IN_NODE=false` ile, PHASE_14
+   deseni) — workflow'lar SQLite'ta kalıcı olduğu için `01_incoming...` hâlâ aktifti
+   (webhook path 200 döndü, 404 değil).
+7. **Uçtan uca gerçek doğrulama:** kullanıcı gerçek telefonundan işletme test numarasına
+   (+1 555-190-4459) art arda iki mesaj gönderdi. İlk mesaj (n8n henüz kapalıyken) yalnızca
+   `webhook_events`'e düştü (n8n'e iletilemedi, `N8nNotifier` best-effort sessiz geçti).
+   n8n açıldıktan sonraki ikinci mesaj **tam zinciri tetikledi**: Meta → ngrok → `POST
+   /webhook/whatsapp` (gerçek `X-Hub-Signature-256`, `facebookexternalua` User-Agent) →
+   tenant çözümü → `N8nNotifier` → n8n `Determine Route` (idle → new_session) → `Get
+   Services` → gerçek bir WhatsApp **interactive list** mesajı (4 gerçek hizmet, dev tenant
+   seed verisi) → `/internal/whatsapp/send` → Meta → **kullanıcının telefonunda gerçekten
+   göründü** (kullanıcı doğruladı: "mesaj bana da geldi"). `message_log`'a gerçek `wamid`'li
+   `outbound`/`sent` kaydı düştü.
+8. **Test verisi temizlendi** (oturum sonu pratiği): gerçek telefon numaralı geçici müşteri
+   (`905418255314`), ilişkili `message_log`/`conversation_states` satırları ve bu oturumun
+   `webhook_events` kayıtları (`phone_number_id=1147876331751351`) silindi.
+9. **Makine durumu (oturum sonunda AÇIK bırakıldı, sonraki oturum için önemli):** ngrok tüneli
+   (`provider-dislodge-bounce.ngrok-free.dev`, authtoken makineye kayıtlı — `ngrok config
+   add-authtoken` bir daha gerekmez) ve n8n (`localhost:5678`) her ikisi de Windows servisi
+   DEĞİL, terminal/işlem kapanırsa elle yeniden başlatılmaları gerekir. **ngrok'un ücretsiz
+   sabit alan adı hesaba bağlı olduğu için URL sabit kalır** — makine yeniden başlasa da aynı
+   komutla (`ngrok http --domain=provider-dislodge-bounce.ngrok-free.dev 8000`) aynı URL
+   geri gelir, Meta tarafında callback URL'i tekrar girmeye gerek yoktur (yalnızca tünel
+   düşerse Meta'nın istekleri backend'e ulaşmaz, webhook "reachable değil" görünür).
+
+## Önceki Oturum (PHASE_30 — Ev laptopunda sıfırdan ortam kurulumu + yeni WABA ile gerçek teslimat)
 
 - **Bu makinede (ev laptopu) ilk kez ortam kuruldu:** PostgreSQL 16 hiç kurulu değildi — EDB
   installer indirilip `--mode unattended` ile sessiz kuruldu, Windows servisi
@@ -514,25 +614,36 @@ Not: 8000 portu başka bir Claude Preview oturumunda dolu olabilir; `.claude/lau
 
 ## Sonraki Oturum İçin Öncelik Sırası
 
-Panel, AI modülü (Gemini), Redis rate limit, kampanya gönderimi, inbound log fix, akış-ortası
-AI yönlendirmesi, reschedule ucu, Apache dev vhost'u, Postgres Windows servisi, **gerçek WABA
-ile uçtan uca mesaj teslimatı** hepsi bitti (PHASE_30). Öncelik:
+**PHASE_32 itibarıyla BACKLOG'daki tüm kod maddeleri kapandı.** Kalanlar kod dışı:
 
-1. **`GET/POST /webhook/whatsapp` + `N8nNotifier` gerçek trafik doğrulaması** — yeni WABA
-   artık gerçek mesaj gönderebiliyor ama Meta'nın bu WABA için webhook'u (inbound mesajlar,
-   durum güncellemeleri) backend'in `GET/POST /webhook/whatsapp` ucuna henüz bağlanmadı/test
-   edilmedi (Meta App > WhatsApp > Configuration'da callback URL + `WEBHOOK_VERIFY_TOKEN`
-   ayarlanmalı — dev makinede ngrok/tünel gerekir, localhost Meta'dan erişilemez).
-2. **Embedded Signup panele kodlanması** (BACKLOG §A madde 25'in geri kalanı) — artık gerçek
-   bir çalışan WABA örneği var, tasarım/test için referans alınabilir.
-3. **Şablon dili sabitlemesi** (`WhatsAppInternalController.php:100`, `language: 'tr'`) —
-   PHASE_30'da fark edildi, henüz değerlendirilmedi. Yeni WABA'nın tüm onaylı şablonları
-   `en_US`; gerçek bir Türkçe şablon onaylatılmadan `type=template` testi yapılamıyor.
-4. **(Düşük öncelik, opsiyonel) n8n reschedule dalını tek çağrıya indir** — Backend ucu
-   PHASE_27'de hazır (`PATCH /appointments/{id}/reschedule`); `01_incoming_whatsapp_message.json`
-   hâlâ eski cancel+yeni-appointment iki-adımlı akışı kullanıyor (fonksiyonel olarak doğru,
-   yalnızca sadeleştirme fırsatı).
-5. n8n queue mode deposu (BACKLOG §A madde 16'nın kalan yarısı) — yalnızca gerçek ölçekleme
-   ihtiyacı doğduğunda; tek instance n8n şu an yeterli.
-6. FullCalendar ticari lisansı (BACKLOG §B E8) zaten kapalı (ücretsiz çekirdeğe geçildi,
-   PHASE_24) — üretime çıkmadan önce tekrar gözden geçirilmesi gereken bir şey yok.
+1. **✅ Meta Dashboard'da Embedded Signup config ID oluşturuldu (PHASE_33)** —
+   `META_ES_CONFIG_ID=934468236330247` (config adı `berber-whatsapp`, App: BerberApp
+   `4440759482837118`), `.env`'e yazıldı. Config: Login variation `General`, Access token
+   `User access token`, Permissions `whatsapp_business_management` + `whatsapp_business_messaging`.
+   App Domains'e `provider-dislodge-bounce.ngrok-free.dev` + Website platform (aynı Site URL)
+   eklendi; Facebook Login for Business > Ayarlar'da `Login with the JavaScript SDK` = Yes +
+   Allowed Domains for the JavaScript SDK'ya aynı ngrok domain eklendi (bunlar olmadan
+   `FB.login` "JSSDK Seçeneği Açılmadı" / "URL Yüklenemedi" hatası veriyordu).
+   **Kod düzeltmesi:** `views/panel/settings_whatsapp.php` `startEmbeddedSignup()` içindeki
+   `FB.login` `extras` nesnesine Meta'nın resmi örneğindeki `setup: {}` ve `featureType: ''`
+   alanları eklendi (öncesinde yalnızca `sessionInfoVersion: '3'` vardı — eksik alanlar
+   WhatsApp'a özel çok adımlı sihirbazı değil, genel Business Login kısayolunu tetikliyordu).
+   **Doğrulanan:** popup gerçek Facebook OAuth'a gidiyor, config/domain hataları çözüldü,
+   sunucu tarafı `code`'u işlemeye hazır. **Doğrulanamayan (ortam kısıtı):** `WA_EMBEDDED_SIGNUP`
+   `FINISH` postMessage'ı — çünkü test eden hesap (Cemal Polat) zaten ilgili WABA'ların
+   bulunduğu Business Manager'ın admini, bu yüzden Meta tam WABA-seçim sihirbazını atlayıp
+   `status: 'connected'` ile kısa bir yeniden-onay ekranı gösteriyor (gizli modda ve
+   entegrasyonlar sıfırlanmış haliyle bile aynı davranış — tarayıcı önbelleği değil, hesap/
+   Business Manager ilişkisi kaynaklı). **Tam uçtan uca doğrulama, admin olmayan gerçek bir
+   pilot işletme hesabıyla yapılmalı** (madde 2, aşağıda).
+2. **Pilot fazı (08_Test_Pilot.md)** — gerçek işletmeyle saha testi; BACKLOG §C pilot hata
+   kayıtları bölümü bu fazda dolacak. Öncesinde işletmenin kendi Türkçe şablonlarını Meta'da
+   onaylatması gerekir (dil artık DB'den geliyor, kod hazır). Bu faz aynı zamanda Embedded
+   Signup'ın WABA-seçim sihirbazının (madde 1) gerçek bir dış kullanıcıyla ilk uçtan uca testi
+   olacak.
+3. **(Ortam notu)** ngrok tüneli + n8n makine/terminal kapanırsa elle yeniden başlatılmalı —
+   ngrok authtoken makineye kayıtlı, sabit alan adı (`provider-dislodge-bounce.ngrok-free.dev`)
+   aynı komutla geri gelir; n8n env değişkenleri için `n8n/README.md`. Üretim öncesi ayrıca:
+   `APP_ENCRYPTION_KEY` KMS'e taşınmalı (§B E4), XAMPP `php.ini date.timezone` bu makinede
+   `Europe/Berlin` (n8n/panel sabit +03:00 gönderdiği için işlevsel sorun yok ama
+   `Europe/Istanbul` yapılması temiz olur).

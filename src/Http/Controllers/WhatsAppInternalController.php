@@ -41,8 +41,8 @@ final class WhatsAppInternalController
         $customerId = $request->input('customer_id');
         $idempotencyKey = $request->input('idempotency_key');
 
-        if ($tenantId === '' || !in_array($type, ['text', 'template', 'interactive'], true)) {
-            throw new ApiException('validation_error', 'tenant_id and a valid type (text|template|interactive) are required.', 422);
+        if ($tenantId === '' || !in_array($type, ['text', 'template', 'interactive', 'flow'], true)) {
+            throw new ApiException('validation_error', 'tenant_id and a valid type (text|template|interactive|flow) are required.', 422);
         }
 
         if ($idempotencyKey !== null) {
@@ -91,17 +91,63 @@ final class WhatsAppInternalController
             }
             $templateId = $template['id'];
             $variables = (array) $request->input('variables', []);
+            // Dil önceliği: istek gövdesi > senkronizasyonda Meta'dan alınan message_templates.language
+            // (migration 0005) > 'tr'. Meta, şablon adı + dil çiftini birlikte doğrular.
+            $language = (string) $request->input('language', '');
+            if ($language === '') {
+                $language = (string) ($template['language'] ?? 'tr');
+            }
             $payload = [
                 'messaging_product' => 'whatsapp',
                 'to' => $customer['whatsapp_number'],
                 'type' => 'template',
                 'template' => [
                     'name' => $template['meta_template_name'],
-                    'language' => ['code' => 'tr'],
+                    'language' => ['code' => $language],
                     'components' => $variables === [] ? [] : [[
                         'type' => 'body',
                         'parameters' => array_map(fn ($v) => ['type' => 'text', 'text' => (string) $v], $variables),
                     ]],
+                ],
+            ];
+        } elseif ($type === 'flow') {
+            // WhatsApp Flows tetikleyici mesajı (randevu formu, PHASE_35). `flow_token` içine
+            // `"{tenant_id}:{customer_id}"` gömülür — WhatsAppFlowController tenant'ı buradan
+            // çözer. n8n flow_id'yi bilmez; META_FLOW_ID burada (Env) okunur.
+            if ($customer === null) {
+                throw new ApiException('validation_error', 'customer_id is required for type=flow.', 422);
+            }
+            $flowId = Env::get('META_FLOW_ID', '');
+            if ($flowId === '') {
+                throw new ApiException('not_configured', 'META_FLOW_ID yapılandırılmamış.', 503);
+            }
+            $flowData = (array) $request->input('flow_data', []);
+            // Meta'nın belgelediği sözleşme: data alanı "boş olmayan bir nesne" olmalı — boşsa
+            // anahtarın kendisi hiç gönderilmemeli (401009/131009'a yol açan asıl sebep buydu,
+            // ayrıca Flow henüz DRAFT durumdayken "mode":"draft" zorunlu).
+            $flowActionPayload = ['screen' => 'SERVICES'];
+            if ($flowData !== []) {
+                $flowActionPayload['data'] = $flowData;
+            }
+            $payload = [
+                'messaging_product' => 'whatsapp',
+                'to' => $customer['whatsapp_number'],
+                'type' => 'interactive',
+                'interactive' => [
+                    'type' => 'flow',
+                    'body' => ['text' => (string) $request->input('body_text', 'Randevu almak için formu doldurun:')],
+                    'action' => [
+                        'name' => 'flow',
+                        'parameters' => [
+                            'flow_message_version' => '3',
+                            'flow_token' => "{$tenantId}:{$customer['id']}",
+                            'flow_id' => $flowId,
+                            'flow_cta' => 'Randevu Al',
+                            'mode' => Env::get('META_FLOW_MODE', 'published'),
+                            'flow_action' => 'navigate',
+                            'flow_action_payload' => $flowActionPayload,
+                        ],
+                    ],
                 ],
             ];
         } else {
@@ -200,6 +246,128 @@ final class WhatsAppInternalController
     }
 
     /**
+     * `GET /settings/whatsapp/health` (BACKLOG §A m.17, 09§2/§6) — panel JWT kanalı.
+     * Numaranın Meta tarafındaki kalite puanı (`quality_rating`) ve mesajlaşma limit
+     * kademesini (`messaging_limit_tier`, ör. TIER_250) döner; panel tier uyarı alanı
+     * bunu gösterir. Meta'ya ulaşılamazsa 502 yerine `available:false` ile 200 döner —
+     * ayar sayfası salt bilgi alanı yüzünden kırılmasın.
+     */
+    public function health(Request $request, string $tenantId): Response
+    {
+        $tenant = $this->tenants->findByIdWithToken($tenantId);
+        if ($tenant === null) {
+            throw new ApiException('tenant_not_found', 'No tenant matches this tenant_id.', 404);
+        }
+        if ($tenant['whatsapp_status'] !== 'connected' || $tenant['access_token_hex'] === null) {
+            return Response::json(['data' => ['available' => false, 'reason' => 'not_connected']]);
+        }
+
+        try {
+            $accessToken = TokenCipher::decrypt(hex2bin($tenant['access_token_hex']), Env::required('APP_ENCRYPTION_KEY'));
+            $result = $this->meta->getPhoneNumberHealth($tenant['phone_number_id'], $accessToken);
+        } catch (\Throwable $e) {
+            return Response::json(['data' => ['available' => false, 'reason' => 'meta_unreachable']]);
+        }
+
+        if ($result['status'] < 200 || $result['status'] >= 300 || isset($result['body']['error'])) {
+            return Response::json(['data' => [
+                'available' => false,
+                'reason' => 'meta_error',
+                'meta_error' => (string) ($result['body']['error']['message'] ?? 'unknown'),
+            ]]);
+        }
+
+        $body = $result['body'];
+
+        return Response::json(['data' => [
+            'available' => true,
+            'display_phone_number' => $body['display_phone_number'] ?? null,
+            'verified_name' => $body['verified_name'] ?? null,
+            'quality_rating' => $body['quality_rating'] ?? null,
+            'messaging_limit_tier' => $body['messaging_limit_tier'] ?? null,
+            'name_status' => $body['name_status'] ?? null,
+        ]]);
+    }
+
+    /**
+     * `POST /settings/whatsapp/connect` (05_WhatsApp_Integration.md §1, BACKLOG §A m.25+m.29) —
+     * Embedded Signup'ın sunucu tarafı. Panel, Meta popup'ından dönen `code` + popup'ın
+     * message event'iyle bildirdiği `waba_id`/`phone_number_id` üçlüsünü gönderir:
+     *   1. code → business token exchange (Graph /oauth/access_token)
+     *   2. WABA'nın bu App'e webhook aboneliği (POST /{waba-id}/subscribed_apps) — Embedded
+     *      Signup DIŞI bağlantıların atladığı, yokluğunda inbound webhook'un sessizce hiç
+     *      tetiklenmediği kritik adım (PHASE_31 bulgusu)
+     *   3. token şifrelenip tenants satırına yazılır, whatsapp_status='connected'
+     */
+    public function connect(Request $request, string $tenantId, string $role): Response
+    {
+        if (!in_array($role, ['owner', 'manager'], true)) {
+            throw new ApiException('forbidden', 'Role does not permit this action.', 403);
+        }
+
+        $code = (string) $request->input('code', '');
+        $wabaId = (string) $request->input('waba_id', '');
+        $phoneNumberId = (string) $request->input('phone_number_id', '');
+
+        $errors = [];
+        if ($code === '') {
+            $errors['code'] = 'Embedded Signup dönüş kodu gerekli.';
+        }
+        if ($wabaId === '') {
+            $errors['waba_id'] = 'waba_id gerekli.';
+        }
+        if ($phoneNumberId === '') {
+            $errors['phone_number_id'] = 'phone_number_id gerekli.';
+        }
+        if ($errors !== []) {
+            throw new ApiException('validation_error', 'Geçersiz alanlar var.', 422, $errors);
+        }
+
+        $appId = Env::get('META_APP_ID', '');
+        $appSecret = Env::get('META_APP_SECRET', '');
+        if ($appId === '' || $appSecret === '') {
+            throw new ApiException('not_configured', 'META_APP_ID / META_APP_SECRET yapılandırılmamış.', 503);
+        }
+
+        $exchange = $this->meta->exchangeCode($appId, $appSecret, $code);
+        $accessToken = (string) ($exchange['body']['access_token'] ?? '');
+        if ($exchange['status'] < 200 || $exchange['status'] >= 300 || $accessToken === '') {
+            throw new ApiException(
+                'whatsapp_connect_failed',
+                (string) ($exchange['body']['error']['message'] ?? 'Meta code exchange başarısız.'),
+                502,
+                ['step' => 'exchange_code']
+            );
+        }
+
+        $subscribe = $this->meta->subscribeApp($wabaId, $accessToken);
+        if ($subscribe['status'] < 200 || $subscribe['status'] >= 300 || isset($subscribe['body']['error'])) {
+            throw new ApiException(
+                'whatsapp_connect_failed',
+                (string) ($subscribe['body']['error']['message'] ?? 'WABA webhook aboneliği başarısız.'),
+                502,
+                ['step' => 'subscribed_apps']
+            );
+        }
+
+        $encryptedHex = bin2hex(TokenCipher::encrypt($accessToken, Env::required('APP_ENCRYPTION_KEY')));
+        try {
+            $tenant = $this->tenants->connectWhatsApp($tenantId, $phoneNumberId, $wabaId, $encryptedHex);
+        } catch (\PDOException $e) {
+            // tenants.phone_number_id UNIQUE — numara başka bir tenant'a bağlıysa 500 yerine 409.
+            if (($e->errorInfo[0] ?? '') === '23505') {
+                throw new ApiException('phone_number_in_use', 'Bu numara başka bir işletmeye bağlı.', 409);
+            }
+            throw $e;
+        }
+        if ($tenant === null) {
+            throw new ApiException('tenant_not_found', 'No tenant matches this tenant_id.', 404);
+        }
+
+        return Response::json(['data' => $tenant]);
+    }
+
+    /**
      * $tenantId verilirse (panel sarmalayıcısı, JWT'den çözülmüş) body'deki tenant_id yerine
      * o kullanılır — panel istemcisi tenant_id gönderemez/geçersiz kılamaz.
      */
@@ -231,7 +399,8 @@ final class WhatsAppInternalController
             $synced[] = $this->templates->upsertFromSync(
                 $tenantId,
                 (string) $metaTemplate['name'],
-                ($metaTemplate['status'] ?? '') === 'APPROVED'
+                ($metaTemplate['status'] ?? '') === 'APPROVED',
+                (string) ($metaTemplate['language'] ?? 'tr')
             );
         }
 
