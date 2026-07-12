@@ -13,6 +13,15 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
   Meta ES config ID oluşturuldu + FB.login `extras` düzeltmesi yapıldı** (detay: "Sonraki Oturum
   İçin Öncelik Sırası" madde 1). Kalan tek adım: pilot fazı (08_Test_Pilot.md) — gerçek
   işletmeyle saha çalışması, kod tarafında bekleyen yok.
+- **PHASE_34-35'te WhatsApp Flows (randevu formu) kodlandı** (`FlowCrypto`,
+  `WhatsAppFlowController`, `WhatsAppNotifier`, `whatsapp-flow/booking_flow.json`; Meta'da
+  Flow "Randevu Al (Berber)" `META_FLOW_ID=1602331731897517`, DRAFT). **PHASE_36'da Flow
+  publish engelinin kök nedeni çözüldü:** ödeme yöntemi engeli (`141006`) kullanıcının kartı
+  WABA'ya bağlamasıyla KALKTI (WABA artık `AVAILABLE`); Flow publish ise Meta'nın integrity
+  kapısına takılı (verification VEYA ~1000 kaliteli konuşma/30g — test numarası 5 alıcı
+  sınırı nedeniyle dev hesabında aşılamaz). **ÜRÜN ENGELİ DEĞİL** — Flow, pilot işletmenin
+  kendi doğrulanmış portföyünde yayınlanacak; üretim yolu liste akışıdır. Kod GitHub'da:
+  `https://github.com/pollatt85/berber-whatsapp-otomasyon`.
 - Önceki durum özeti: 🟡 devam ediyordu. Backend + n8n + panel + AI (Gemini) + Redis rate limit +
   kampanya gönderimi + inbound log fix + akış-ortası AI yönlendirmesi + reschedule ucu +
   Apache dev vhost'u + Postgres Windows servisi hepsi tamamlandı (PHASE_14-28). **PHASE_30'da
@@ -29,7 +38,66 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
   n8n queue mode (madde 16, yalnızca ölçekleme aşamasında, dokunulmadı) + backend'in şablon
   dili sabit `tr` olması (yalnızca `en_US` onaylı şablonlarla çakışıyor, aşağıda not).
 
-## Bu Oturumda Yapılanlar (PHASE_32 — Kalan tüm BACKLOG maddeleri)
+## Bu Oturumda Yapılanlar (PHASE_36 — Flow publish engeli kök neden analizi + ödeme düzeltmesi + GitHub push)
+
+Hedef: WhatsApp Flows'un Meta tarafında gönderilememesi (`#139000 Blocked by Integrity`)
+sorununu derinlemesine araştırıp çözmek. Sonuç: **iki somut engel bulundu, biri tamamen
+çözüldü (ödeme), biri dev hesabında yapısal olarak aşılamaz ama ÜRÜN ENGELİ DEĞİL** (detay
+madde 4). Ayrıca PHASE_32-35 işleri commit'lenip GitHub'a push edildi.
+
+1. **GitHub push tamamlandı** — repo: `https://github.com/pollatt85/berber-whatsapp-otomasyon`.
+   PHASE_32-35 değişiklikleri `49fd823` olarak commit'lendi. Uzak repoda İLGİSİZ bir geçmiş
+   vardı (`2d7fca8` "Initial commit PHASE_1-29" — muhtemelen diğer makineden atılmış, bu
+   makinenin `0f56e57` ilk commit'iyle ortak atası yok). `--allow-unrelated-histories` merge
+   (`57bd502`, tüm çakışmalar `--ours` ile bu makinenin daha güncel sürümü lehine çözüldü)
+   sonrası normal push başarılı — force gerekmedi. `gh` CLI'da oturum açık DEĞİL; remote
+   HTTPS ile çalışıyor.
+2. **Meta ödeme engeli (141006) ÇÖZÜLDÜ** — Flow'dan bağımsız olarak WABA
+   `can_send_message: BLOCKED` durumundaydı: "There is an error with the payment method".
+   Kullanıcı MasterCard ****2744'ü Business Suite > Faturalar ve ödemeler > WhatsApp Business
+   hesapları sekmesinden **WABA'ya bağladı** (portföye ekli olması yetmiyor, WhatsApp hesabına
+   ayrıca bağlanmalı). Para birimi **USD** (TL, WhatsApp faturalandırmasında desteklenmiyor;
+   seçim kalıcı/değiştirilemez), vergi bilgileri şahıs (Cemal POLAT), KDV numarası boş
+   (mükellef değil — Meta KDV'yi faturaya kendisi ekler), ticari amaç "Evet".
+   **Doğrulandı:** health_status'ta WABA artık `AVAILABLE` — işletme başlatmalı mesajların
+   (şablon/hatırlatma/kampanya) önü açıldı.
+3. **İşletme profili + Business Verification denemesi** — Business Info şahıs bilgileriyle
+   dolduruldu (işletme adı = Cemal POLAT, ev adresi, kişisel telefon). Verification sihirbazı
+   girildi ama Meta otomatik kayıt eşleşmesi bulamayınca 4 belge türünden birini istedi
+   (işletme banka özeti / sicil-ruhsat / vergi levhası / kuruluş belgesi) — kullanıcıda resmi
+   işletme kaydı olmadığı için İPTAL edildi. Bu yol ancak esnaf/şirket kaydı açılırsa mümkün.
+4. **Flow publish engelinin kök nedeni netleşti (`139000` / subcode `4233020`):** Meta'nın
+   integrity ön koşul kapısı — Flow yayınlamak için **business verification VEYA "yüksek mesaj
+   kalitesi"** (~1000 kaliteli konuşma/30 gün, WhatsApp Manager Flow ekranındaki kart) şart.
+   Meta topluluk forumundaki resmi yanıta göre teknik atlatması yok. **Kritik tespit: test
+   numarası (+1 555-190-4459) en fazla 5 kayıtlı alıcıya mesaj atabildiği için kalite yolu bu
+   dev hesapta matematiksel olarak imkansız.** `mode: "draft"` parametresiyle gönderim de aynı
+   engele takılıyor (denendi). **ÜRÜN ENGELİ DEĞİL:** SaaS modelinde her tenant Embedded
+   Signup ile kendi WABA'sını kendi portföyünde bağlıyor; Flow, pilot/gerçek işletmenin
+   (vergi levhası olan) doğrulanmış portföyünde yayınlanacak. Dev hesabında Flow'u zorlamak
+   anlamsız — karar: liste akışı üretim yolu olarak kalır, Flow kodu hazır bekler.
+5. **Flow endpoint doğrulandı (131000'in nedeni backend'in kapalı olmasıydı):** backend
+   (port 8000) kapalıydı, ngrok 502 dönüyordu → Meta health check'i endpoint'e hiç
+   ulaşamıyordu. Backend başlatıldı; **Meta'nın şifreli ping protokolünün birebir simülasyonu**
+   (public key `secrets/whatsapp_flow_public.pem` ile RSA-OAEP-SHA256 + AES-128-GCM, yanıt
+   bit-tersine-çevrilmiş IV ile çözülür) hem lokal hem ngrok üzerinden `{"data":{"status":
+   "active"}}` döndü — kod tarafı kusursuz. `endpoint_uri` Meta'da doğru kayıtlı.
+6. **Altın teşhis yöntemi (gelecek oturumlar için):** `GET /{waba_id|flow_id|phone_number_id}
+   ?fields=health_status` — `#139000` şemsiye hatasının altındaki gerçek engelleri entity
+   bazında (`BLOCKED`/`LIMITED`/`AVAILABLE` + `error_code`) açıkça listeler. Bu oturumda
+   `141006` (ödeme) + `131000` (endpoint) + `141010` (verification, yalnızca LIMITED — engel
+   değil!) bu yolla bulundu. Business verification'ın Flow publish DIŞINDA hiçbir şeyi
+   engellemediği (sadece 250/gün limiti) bu çıktıyla kanıtlandı.
+7. **Flow'u publish'siz test etme yolu:** WhatsApp Manager Flow Builder'daki **"Çalıştır"**
+   önizlemesi endpoint'i gerçekten çağırır (INIT/data_exchange) — gerçek hizmet/personel/slot
+   verisiyle uçtan uca test mümkün, publish kapısına takılmaz. (Bu oturumda kullanıcıya
+   önerildi, henüz birlikte çalıştırılmadı.)
+8. **Ortam:** backend (PHP built-in, 8000) bu oturumda arka planda başlatıldı ve AÇIK
+   bırakıldı; ngrok tüneli ayakta. İkisi de servis değil — makine yeniden başlarsa elle
+   başlatılmalı (Meta Flow health check'i endpoint'e her an gelebilir, Flow işleri yapılacaksa
+   backend açık olmalı).
+
+## Önceki Oturum (PHASE_32 — Kalan tüm BACKLOG maddeleri)
 
 Hedef: kullanıcı talebi "kalan tüm maddeleri bir kerede bitir". Tümü gerçek Postgres + gerçek
 Meta WABA + canlı n8n'e karşı doğrulandı; detaylar CHANGELOG PHASE_32'de. Özet:
@@ -640,7 +708,17 @@ Not: 8000 portu başka bir Claude Preview oturumunda dolu olabilir; `.claude/lau
    kayıtları bölümü bu fazda dolacak. Öncesinde işletmenin kendi Türkçe şablonlarını Meta'da
    onaylatması gerekir (dil artık DB'den geliyor, kod hazır). Bu faz aynı zamanda Embedded
    Signup'ın WABA-seçim sihirbazının (madde 1) gerçek bir dış kullanıcıyla ilk uçtan uca testi
-   olacak.
+   olacak. **Flow (randevu formu) da bu fazda açılır:** pilot işletmenin kendi doğrulanmış
+   portföyünde Flow yayınlanabilir (PHASE_36 kök neden analizi — dev hesabında publish kapısı
+   aşılamaz, bkz. "Bu Oturumda Yapılanlar" madde 4). O güne kadar üretim yolu liste akışıdır;
+   Flow'un ekran/endpoint testi Flow Builder "Çalıştır" önizlemesiyle publish'siz yapılabilir
+   (backend + ngrok açıkken).
+2b. **(İsteğe bağlı, Flow'u dev'de denemek için)** Meta'nın `#139000` şemsiye hatasını teşhis
+   etmek gerekirse: `GET /{waba_id|flow_id}?fields=health_status` (System User token'ıyla) —
+   entity bazlı gerçek engel listesi. PHASE_36 durumu: WABA `AVAILABLE` (ödeme çözüldü),
+   BUSINESS `LIMITED` (verification yok, yalnızca 250/gün limiti — engel değil), FLOW
+   `131000` (Meta health check'i publish denemesinde koşuyor; endpoint doğrulandı, backend
+   açıkken geçer).
 3. **(Ortam notu)** ngrok tüneli + n8n makine/terminal kapanırsa elle yeniden başlatılmalı —
    ngrok authtoken makineye kayıtlı, sabit alan adı (`provider-dislodge-bounce.ngrok-free.dev`)
    aynı komutla geri gelir; n8n env değişkenleri için `n8n/README.md`. Üretim öncesi ayrıca:

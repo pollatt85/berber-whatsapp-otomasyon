@@ -1184,3 +1184,42 @@ temizlendi. Migration 0005 gerçek DB'ye uygulandı (pg_hba geçici trust yönte
 alındı ve doğrulandı).
 
 **STATUS: PHASE_32_ALL_BACKLOG_ITEMS_CLOSED**
+
+## PHASE_33-35 — 2026-07-11 (özet; detay PROJECT_MEMORY.md)
+
+- **PHASE_33:** Meta Dashboard'da Embedded Signup config ID oluşturuldu
+  (`META_ES_CONFIG_ID=934468236330247`) + `FB.login` `extras`'ına `setup`/`featureType`
+  düzeltmesi (`views/panel/settings_whatsapp.php`). Tam WABA-seçim sihirbazı doğrulaması
+  admin-olmayan gerçek hesap gerektiriyor (pilot fazına ertelendi).
+- **PHASE_34-35: WhatsApp Flows (randevu formu) altyapısı kodlandı:**
+  - `whatsapp-flow/booking_flow.json` — 3 ekranlı Flow (SERVICES → STAFF → SLOT), Flow JSON
+    v7.1, data_api_version 3.0; Meta'da "Randevu Al (Berber)" (`META_FLOW_ID=1602331731897517`,
+    DRAFT).
+  - `src/Support/FlowCrypto.php` — Meta data-exchange şifreleme protokolü (RSA-OAEP-SHA256 +
+    AES-128-GCM, yanıt bit-tersine-çevrilmiş IV ile). RSA çifti `secrets/` altında
+    (.gitignore'da).
+  - `src/Http/Controllers/WhatsAppFlowController.php` + `POST /webhook/whatsapp-flow` —
+    ping/INIT/data_exchange aksiyonları; tenant kimliği `flow_token`'dan.
+  - `src/Support/WhatsAppNotifier.php` — Flow mesajı gönderme yardımcıları.
+  - `.env`: `WHATSAPP_FLOW_PRIVATE_KEY_PATH` + `META_FLOW_ID`.
+
+## PHASE_36 — 2026-07-12
+
+Hedef: Flow gönderiminin `#139000 Blocked by Integrity` ile engellenmesinin kök neden analizi.
+
+1. **GitHub push** — PHASE_32-35 işleri `49fd823` olarak commit'lendi; uzak repodaki ilgisiz
+   geçmişle (`2d7fca8`) `--allow-unrelated-histories` merge (`57bd502`, çakışmalar `--ours`)
+   sonrası `https://github.com/pollatt85/berber-whatsapp-otomasyon`'a push edildi.
+2. **Ödeme engeli (141006) çözüldü** — kart WABA'ya bağlandı (para birimi USD; TL
+   desteklenmiyor), vergi bilgileri şahıs olarak dolduruldu. WABA health `BLOCKED` →
+   `AVAILABLE`; işletme başlatmalı mesajların önü açıldı.
+3. **Flow publish engeli kök nedeni:** Meta integrity kapısı (subcode `4233020`) — business
+   verification VEYA ~1000 kaliteli konuşma/30 gün şart; test numarası 5 alıcı sınırı
+   nedeniyle dev hesabında aşılamaz. `mode:"draft"` gönderimi de aynı engele takılıyor.
+   Business Verification belge istiyor (4 tür), kullanıcıda resmi işletme kaydı yok — iptal.
+   **Karar: üretim yolu liste akışı; Flow pilot işletmenin doğrulanmış portföyünde yayınlanacak.**
+4. **Flow endpoint doğrulandı** — `131000`'in nedeni backend'in kapalı olmasıydı; başlatıldı,
+   Meta ping protokolünün şifreli simülasyonu lokal + ngrok üzerinden `{"status":"active"}`
+   döndü. Teşhis aracı: `GET /{id}?fields=health_status` (entity bazlı gerçek engel listesi).
+
+**STATUS: PHASE_36_FLOW_GATE_ROOT_CAUSED_PAYMENT_FIXED**
