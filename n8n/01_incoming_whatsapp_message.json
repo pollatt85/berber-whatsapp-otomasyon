@@ -1,2231 +1,2620 @@
 {
-  "name": "01 - Gelen WhatsApp Mesaji (04 SS2/SS3/SS4)",
-  "nodes": [
-    {
-      "id": "sticky_intro",
-      "name": "Not: Mimari",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        -400,
-        -320
-      ],
-      "parameters": {
-        "width": 520,
-        "height": 300,
-        "content": "## Tetikleyici\nBu workflow Meta'nin webhook'unu DOGRUDAN almaz. Backend (`WhatsAppWebhookController::receive`) Meta imzasini zaten dogrulamis, tenant'i zaten cozmus olarak bu Webhook node'una POST eder (bkz. `N8nNotifier`, PHASE_13). Body: {tenant_id, phone_number_id, payload}. Backend, govdeyi N8N_SERVICE_SECRET ile HMAC imzalar (X-Signature) - burada tekrar dogrulanir.\n\nBu tek workflow, 04_n8n_Workflows.md'nin SS2 (yeni oturum), SS3 (hizmet/personel/slot secimi) ve SS4 (onay/iptal/degistir) bolumlerini kapsar - n8n'de tek Webhook URL oldugu icin ayri workflow'lar yerine Switch ile dallanir."
-      }
-    },
-    {
-      "id": "webhook_trigger",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        -380,
-        0
-      ],
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "incoming-whatsapp-message",
-        "responseMode": "responseNode",
-        "options": {
-          "rawBody": true
-        }
-      }
-    },
-    {
-      "id": "verify_signature",
-      "name": "Verify Backend Signature",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -140,
-        0
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_SERVICE_SECRET;\nconst itemBinary = $input.item.binary;\nconst rawBinary = itemBinary && itemBinary.data && itemBinary.data.data;\nconst raw = typeof rawBinary === 'string' ? Buffer.from(rawBinary, 'base64').toString('utf8') : null;\nconst headers = $json.headers || {};\nconst received = headers['x-signature'];\nif (typeof raw !== 'string' || !received) {\n  return { json: { valid: false } };\n}\nconst expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');\nconst a = Buffer.from(expected, 'utf8');\nconst b = Buffer.from(received, 'utf8');\nconst valid = a.length === b.length && crypto.timingSafeEqual(a, b);\nif (!valid) {\n  return { json: { valid: false } };\n}\nconst parsed = JSON.parse(raw);\nreturn { json: { valid: true, tenant_id: parsed.tenant_id, phone_number_id: parsed.phone_number_id, payload: parsed.payload } };"
-      }
-    },
-    {
-      "id": "if_sig_valid",
-      "name": "Signature Valid?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        100,
-        0
-      ],
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.valid}}",
-              "value2": true
+    "name": "01 - Gelen WhatsApp Mesaji (04 SS2/SS3/SS4)",
+    "nodes": [
+        {
+            "id": "sticky_intro",
+            "name": "Not: Mimari",
+            "type": "n8n-nodes-base.stickyNote",
+            "typeVersion": 1,
+            "position": [
+                -400,
+                -320
+            ],
+            "parameters": {
+                "width": 520,
+                "height": 300,
+                "content": "## Tetikleyici\nBu workflow Meta'nin webhook'unu DOGRUDAN almaz. Backend (`WhatsAppWebhookController::receive`) Meta imzasini zaten dogrulamis, tenant'i zaten cozmus olarak bu Webhook node'una POST eder (bkz. `N8nNotifier`, PHASE_13). Body: {tenant_id, phone_number_id, payload}. Backend, govdeyi N8N_SERVICE_SECRET ile HMAC imzalar (X-Signature) - burada tekrar dogrulanir.\n\nBu tek workflow, 04_n8n_Workflows.md'nin SS2 (yeni oturum), SS3 (hizmet/personel/slot secimi) ve SS4 (onay/iptal/degistir) bolumlerini kapsar - n8n'de tek Webhook URL oldugu icin ayri workflow'lar yerine Switch ile dallanir."
             }
-          ]
-        }
-      }
-    },
-    {
-      "id": "respond_403",
-      "name": "Respond 403",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        340,
-        140
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 403,
-        "responseBody": "={{ { error: 'unauthorized', message: 'Invalid X-Signature.' } }}"
-      }
-    },
-    {
-      "id": "extract_message",
-      "name": "Extract Message",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        340,
-        -100
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_SERVICE_SECRET;\nconst getSignature = crypto.createHmac('sha256', secret).update('').digest('hex');\nconst tenantId = $json.tenant_id;\nconst phoneNumberId = $json.phone_number_id;\nconst entry = ($json.payload && $json.payload.entry) || [];\nconst change = (entry[0] && entry[0].changes && entry[0].changes[0]) || {};\nconst value = change.value || {};\nconst message = (value.messages || [])[0] || null;\nif (!message) {\n  return { json: { has_message: false, tenant_id: tenantId, get_signature: getSignature } };\n}\nconst interactive = message.interactive || {};\nconst replyId = (interactive.button_reply && interactive.button_reply.id) || (interactive.list_reply && interactive.list_reply.id) || null;\nlet flowResponse = null;\nif (interactive.nfm_reply && interactive.nfm_reply.response_json) {\n  try { flowResponse = JSON.parse(interactive.nfm_reply.response_json); } catch (e) { flowResponse = null; }\n}\nreturn { json: { has_message: true, tenant_id: tenantId, phone_number_id: phoneNumberId, message_id: message.id || null, customer_whatsapp_number: message.from, message_type: message.type, text_body: (message.text && message.text.body) || null, interactive_reply_id: replyId, flow_response: flowResponse, get_signature: getSignature } };"
-      }
-    },
-    {
-      "id": "if_has_message",
-      "name": "Has Message?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        580,
-        -100
-      ],
-      "parameters": {
-        "conditions": {
-          "boolean": [
-            {
-              "value1": "={{$json.has_message}}",
-              "value2": true
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "respond_ignored",
-      "name": "Respond Ignored",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        820,
-        60
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'ignored' } }}"
-      }
-    },
-    {
-      "id": "sign_upsert_customer",
-      "name": "Sign: Upsert Customer",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        820,
-        -220
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst bodyObj = { tenant_id: $json.tenant_id, whatsapp_number: $json.customer_whatsapp_number };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { ...$json, body_str: bodyStr, signature } };"
-      }
-    },
-    {
-      "id": "http_upsert_customer",
-      "name": "Upsert Customer",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1060,
-        -220
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/customers",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.signature}}"
-            }
-          ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "sign_log_inbound",
-      "name": "Sign: Log Inbound",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1060,
-        -20
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst em = $('Extract Message').item.json;\nconst bodyObj = { tenant_id: em.tenant_id, customer_id: $json.data.id, type: em.message_type, content: { text_body: em.text_body, interactive_reply_id: em.interactive_reply_id }, idempotency_key: em.message_id };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature: signature } };"
-      }
-    },
-    {
-      "id": "http_log_inbound",
-      "name": "Log Inbound Message",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1300,
-        -20
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/log-inbound",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.signature}}"
-            }
-          ]
-        },
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
-      }
-    },
-    {
-      "id": "http_get_state",
-      "name": "Get Conversation State",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1300,
-        -220
-      ],
-      "parameters": {
-        "method": "GET",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state?tenant_id={{$('Extract Message').item.json.tenant_id}}&customer_id={{$json.data.id}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-Signature",
-              "value": "={{$('Extract Message').item.json.get_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "determine_route",
-      "name": "Determine Route",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1540,
-        -220
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const state = $json.data || { step: 'idle', context: '{}' };\nlet context = {};\ntry { context = typeof state.context === 'string' ? JSON.parse(state.context) : (state.context || {}); } catch (e) { context = {}; }\nconst em = $('Extract Message').item.json;\nconst replyId = em.interactive_reply_id || '';\nconst step = state.step || 'idle';\nlet route;\nif (em.flow_response) route = 'flow_submitted';\nelse if (replyId.indexOf('confirm_') === 0) route = 'confirm';\nelse if (replyId.indexOf('cancel_') === 0) route = 'cancel';\nelse if (replyId.indexOf('reschedule_') === 0) route = 'reschedule';\nelse if (step === 'awaiting_service_selection' && replyId.indexOf('svc_') === 0) route = 'service_chosen';\nelse if (step === 'awaiting_staff_selection' && replyId.indexOf('staff_') === 0) route = 'staff_chosen';\nelse if (step === 'awaiting_slot_selection' && replyId.indexOf('slot_') === 0) route = 'slot_chosen';\nelse if (step === 'awaiting_staff_selection' && replyId === 'back_to_service') route = 'back_to_service';\nelse if (step === 'awaiting_slot_selection' && replyId === 'back_to_staff') route = 'back_to_staff';\nelse if (em.message_type === 'text' && step === 'idle') route = 'new_session';\nelse if (em.message_type === 'text') route = 'ai_question';\nelse route = 'unhandled';\nreturn { json: { tenant_id: em.tenant_id, customer_id: $('Upsert Customer').item.json.data.id, customer_whatsapp_number: em.customer_whatsapp_number, reply_id: replyId, flow_response: em.flow_response, get_signature: em.get_signature, state_context: context, route: route } };"
-      }
-    },
-    {
-      "id": "switch_route",
-      "name": "Route",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        1780,
-        -220
-      ],
-      "parameters": {
-        "mode": "rules",
-        "rules": {
-          "values": [
-            {
-              "conditions": {
+        {
+            "id": "webhook_trigger",
+            "name": "Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                -380,
+                0
+            ],
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "incoming-whatsapp-message",
+                "responseMode": "responseNode",
                 "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "new_session",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "new_session"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "service_chosen",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "service_chosen"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "staff_chosen",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "staff_chosen"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "slot_chosen",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "slot_chosen"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "confirm",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "confirm"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "cancel",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "cancel"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "reschedule",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "reschedule"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "back_to_service",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "back_to_service"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "back_to_staff",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "back_to_staff"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{$json.route}}",
-                    "rightValue": "flow_submitted",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "flow_submitted"
+                    "rawBody": true
+                }
             }
-          ]
         },
-        "options": {
-          "fallbackOutput": "extra",
-          "renameFallbackOutput": "unhandled"
+        {
+            "id": "verify_signature",
+            "name": "Verify Backend Signature",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                -140,
+                0
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_SERVICE_SECRET;\nconst itemBinary = $input.item.binary;\nconst rawBinary = itemBinary && itemBinary.data && itemBinary.data.data;\nconst raw = typeof rawBinary === 'string' ? Buffer.from(rawBinary, 'base64').toString('utf8') : null;\nconst headers = $json.headers || {};\nconst received = headers['x-signature'];\nif (typeof raw !== 'string' || !received) {\n  return { json: { valid: false } };\n}\nconst expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');\nconst a = Buffer.from(expected, 'utf8');\nconst b = Buffer.from(received, 'utf8');\nconst valid = a.length === b.length && crypto.timingSafeEqual(a, b);\nif (!valid) {\n  return { json: { valid: false } };\n}\nconst parsed = JSON.parse(raw);\nreturn { json: { valid: true, tenant_id: parsed.tenant_id, phone_number_id: parsed.phone_number_id, payload: parsed.payload } };"
+            }
+        },
+        {
+            "id": "if_sig_valid",
+            "name": "Signature Valid?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                100,
+                0
+            ],
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{$json.valid}}",
+                            "value2": true
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "respond_403",
+            "name": "Respond 403",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                340,
+                140
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 403,
+                "responseBody": "={{ { error: 'unauthorized', message: 'Invalid X-Signature.' } }}"
+            }
+        },
+        {
+            "id": "extract_message",
+            "name": "Extract Message",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                340,
+                -100
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst secret = $env.N8N_SERVICE_SECRET;\nconst getSignature = crypto.createHmac('sha256', secret).update('').digest('hex');\nconst tenantId = $json.tenant_id;\nconst phoneNumberId = $json.phone_number_id;\nconst entry = ($json.payload && $json.payload.entry) || [];\nconst change = (entry[0] && entry[0].changes && entry[0].changes[0]) || {};\nconst value = change.value || {};\nconst message = (value.messages || [])[0] || null;\nif (!message) {\n  return { json: { has_message: false, tenant_id: tenantId, get_signature: getSignature } };\n}\nconst interactive = message.interactive || {};\nconst replyId = (interactive.button_reply && interactive.button_reply.id) || (interactive.list_reply && interactive.list_reply.id) || null;\nlet flowResponse = null;\nif (interactive.nfm_reply && interactive.nfm_reply.response_json) {\n  try { flowResponse = JSON.parse(interactive.nfm_reply.response_json); } catch (e) { flowResponse = null; }\n}\nreturn { json: { has_message: true, tenant_id: tenantId, phone_number_id: phoneNumberId, message_id: message.id || null, customer_whatsapp_number: message.from, message_type: message.type, text_body: (message.text && message.text.body) || null, interactive_reply_id: replyId, flow_response: flowResponse, get_signature: getSignature } };"
+            }
+        },
+        {
+            "id": "if_has_message",
+            "name": "Has Message?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                580,
+                -100
+            ],
+            "parameters": {
+                "conditions": {
+                    "boolean": [
+                        {
+                            "value1": "={{$json.has_message}}",
+                            "value2": true
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "respond_ignored",
+            "name": "Respond Ignored",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                820,
+                60
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'ignored' } }}"
+            }
+        },
+        {
+            "id": "sign_upsert_customer",
+            "name": "Sign: Upsert Customer",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                820,
+                -220
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst bodyObj = { tenant_id: $json.tenant_id, whatsapp_number: $json.customer_whatsapp_number };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { ...$json, body_str: bodyStr, signature } };"
+            }
+        },
+        {
+            "id": "http_upsert_customer",
+            "name": "Upsert Customer",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1060,
+                -220
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/customers",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "sign_log_inbound",
+            "name": "Sign: Log Inbound",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1060,
+                -20
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst em = $('Extract Message').item.json;\nconst bodyObj = { tenant_id: em.tenant_id, customer_id: $json.data.id, type: em.message_type, content: { text_body: em.text_body, interactive_reply_id: em.interactive_reply_id }, idempotency_key: em.message_id };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature: signature } };"
+            }
+        },
+        {
+            "id": "http_log_inbound",
+            "name": "Log Inbound Message",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1300,
+                -20
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/log-inbound",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.signature}}"
+                        }
+                    ]
+                },
+                "options": {
+                    "response": {
+                        "response": {
+                            "neverError": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "id": "http_get_state",
+            "name": "Get Conversation State",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1300,
+                -220
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state?tenant_id={{$('Extract Message').item.json.tenant_id}}&customer_id={{$json.data.id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Extract Message').item.json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "determine_route",
+            "name": "Determine Route",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1540,
+                -220
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const state = $json.data || { step: 'idle', context: '{}' };\nlet context = {};\ntry { context = typeof state.context === 'string' ? JSON.parse(state.context) : (state.context || {}); } catch (e) { context = {}; }\nconst em = $('Extract Message').item.json;\nconst replyId = em.interactive_reply_id || '';\nconst step = state.step || 'idle';\nlet route;\nif (em.flow_response) route = 'flow_submitted';\nelse if (replyId.indexOf('confirm_') === 0) route = 'confirm';\nelse if (replyId.indexOf('cancel_') === 0) route = 'cancel';\nelse if (replyId.indexOf('reschedule_') === 0) route = 'reschedule';\nelse if (replyId === 'my_appointments') route = 'my_appointments';\nelse if (replyId.indexOf('my_appointment_') === 0) route = 'appointment_selected';\nelse if (step === 'awaiting_service_selection' && replyId.indexOf('svc_') === 0) route = 'service_chosen';\nelse if (step === 'awaiting_staff_selection' && replyId.indexOf('staff_') === 0) route = 'staff_chosen';\nelse if (step === 'awaiting_slot_selection' && replyId.indexOf('slot_') === 0) route = 'slot_chosen';\nelse if (step === 'awaiting_staff_selection' && replyId === 'back_to_service') route = 'back_to_service';\nelse if (step === 'awaiting_slot_selection' && replyId === 'back_to_staff') route = 'back_to_staff';\nelse if (em.message_type === 'text' && step === 'idle') route = 'new_session';\nelse if (em.message_type === 'text') route = 'ai_question';\nelse route = 'unhandled';\nreturn { json: { tenant_id: em.tenant_id, customer_id: $('Upsert Customer').item.json.data.id, customer_whatsapp_number: em.customer_whatsapp_number, reply_id: replyId, flow_response: em.flow_response, get_signature: em.get_signature, state_context: context, route: route } };"
+            }
+        },
+        {
+            "id": "switch_route",
+            "name": "Route",
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3,
+            "position": [
+                1780,
+                -220
+            ],
+            "parameters": {
+                "mode": "rules",
+                "rules": {
+                    "values": [
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "new_session",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "new_session"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "service_chosen",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "service_chosen"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "staff_chosen",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "staff_chosen"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "slot_chosen",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "slot_chosen"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "confirm",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "confirm"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "cancel",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "cancel"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "reschedule",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "reschedule"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "back_to_service",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "back_to_service"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "back_to_staff",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "back_to_staff"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "flow_submitted",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "flow_submitted"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "my_appointments",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "my_appointments"
+                        },
+                        {
+                            "conditions": {
+                                "options": {
+                                    "caseSensitive": true,
+                                    "leftValue": "",
+                                    "typeValidation": "strict"
+                                },
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{$json.route}}",
+                                        "rightValue": "appointment_selected",
+                                        "operator": {
+                                            "type": "string",
+                                            "operation": "equals"
+                                        }
+                                    }
+                                ],
+                                "combinator": "and"
+                            },
+                            "renameOutput": true,
+                            "outputKey": "appointment_selected"
+                        }
+                    ]
+                },
+                "options": {
+                    "fallbackOutput": "extra",
+                    "renameFallbackOutput": "unhandled"
+                }
+            }
+        },
+        {
+            "id": "http_get_services",
+            "name": "Get Services",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2040,
+                -700
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/services?tenant_id={{$json.tenant_id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "build_services_message",
+            "name": "Build Services List Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2280,
+                -700
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst services = ($('Get Services').item.json.data || []).filter(s => s.active !== false);\nconst appts = ($json.data || []).filter(a => a.status === 'pending' || a.status === 'confirmed');\nconst maxServices = appts.length > 0 ? 9 : 10;\nconst rows = services.slice(0, maxServices).map(s => ({ id: 'svc_' + s.id, title: String(s.name).substring(0, 24), description: (s.duration_minutes + ' dk - ' + s.price + ' TL').substring(0, 72) }));\nconst sections = [];\nif (appts.length > 0) {\n  sections.push({ title: 'İşlemleriniz', rows: [ { id: 'my_appointments', title: '📋 Randevularım', description: appts.length + ' aktif randevu' } ] });\n}\nsections.push({ title: 'Hizmetler', rows: rows });\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_services_' + Date.now(), interactive: { type: 'list', body: { text: '👋 Merhaba! Hangi hizmeti almak istersiniz?' }, action: { button: 'Hizmet Seç', sections: sections } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_service_selection', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
+            }
+        },
+        {
+            "id": "http_send_services_msg",
+            "name": "Send Services List",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2520,
+                -700
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_service",
+            "name": "Patch State: Awaiting Service",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2760,
+                -700
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Build Services List Msg').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Build Services List Msg').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok0",
+            "name": "Respond OK (new_session)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3000,
+                -700
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'new_session' } }}"
+            }
+        },
+        {
+            "id": "http_get_staff",
+            "name": "Get Staff For Service",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2040,
+                -450
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/staff?tenant_id={{$json.tenant_id}}&service_id={{$json.reply_id.startsWith('svc_') ? $json.reply_id.replace('svc_','') : $json.state_context.service_id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "build_staff_message",
+            "name": "Build Staff List Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2280,
+                -450
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst serviceId = dr.reply_id.startsWith('svc_') ? dr.reply_id.replace('svc_', '') : (dr.state_context && dr.state_context.service_id);\nconst staffList = ($json.data || []).filter(s => s.active !== false);\nconst staffIds = staffList.map(s => s.id);\nconst rows = staffList.slice(0, 8).map(s => ({ id: 'staff_' + s.id, title: String(s.name).substring(0, 24) }));\nif (staffIds.length > 1) { rows.push({ id: 'staff_any', title: 'Farketmez' }); }\nrows.push({ id: 'back_to_service', title: '◀ Geri (Hizmetler)' });\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_staff_' + Date.now(), interactive: { type: 'list', body: { text: '💈 Hangi ustamızdan hizmet almak istersiniz?' }, action: { button: 'Personel Seç', sections: [ { title: 'Personeller', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_staff_selection', context: { service_id: serviceId, staff_ids: staffIds } };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
+            }
+        },
+        {
+            "id": "http_send_staff_msg",
+            "name": "Send Staff List",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2520,
+                -450
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_staff",
+            "name": "Patch State: Awaiting Staff",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2760,
+                -450
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Build Staff List Msg').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Build Staff List Msg').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok1",
+            "name": "Respond OK (service_chosen)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3000,
+                -450
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'service_chosen' } }}"
+            }
+        },
+        {
+            "id": "prep_avail_staff",
+            "name": "Prepare Availability Query (Staff Choice)",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                -200
+            ],
+            "parameters": {
+                "mode": "runOnceForAllItems",
+                "jsCode": "const dr = $('Determine Route').first().json;\nconst ctx = dr.state_context || {};\nconst replyId = dr.reply_id;\nlet staffId;\nif (replyId === 'staff_any') { staffId = (ctx.staff_ids || [])[0]; } else { staffId = replyId.replace('staff_', ''); }\nconst serviceId = ctx.service_id;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: null } }];"
+            }
+        },
+        {
+            "id": "prep_avail_reschedule",
+            "name": "Prepare Availability Query (Reschedule)",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                60
+            ],
+            "parameters": {
+                "mode": "runOnceForAllItems",
+                "jsCode": "const dr = $('Determine Route').first().json;\nconst rest = dr.reply_id.replace('reschedule_', '');\nconst parts = rest.split('|');\nconst oldAppointmentId = parts[0];\nconst serviceId = parts[1];\nconst staffId = parts[2];\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: oldAppointmentId } }];"
+            }
+        },
+        {
+            "id": "retry_availability",
+            "name": "Slot Taken -> Retry Availability",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2280,
+                320
+            ],
+            "parameters": {
+                "mode": "runOnceForAllItems",
+                "jsCode": "const dr = $('Determine Route').first().json;\nconst sp = $('Sign: Post Appointment').first().json;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: sp.service_id, staff_id: sp.staff_id, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: sp.reschedule_of || null } }];"
+            }
+        },
+        {
+            "id": "http_get_availability",
+            "name": "Get Availability",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2520,
+                -70
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/availability?tenant_id={{$json.tenant_id}}&service_id={{$json.service_id}}&staff_id={{$json.staff_id}}&date={{$json.date}}&days={{$json.days}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "attach_request_context",
+            "name": "Attach Request Context",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2760,
+                -70
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "let req;\ntry { req = $('Prepare Availability Query (Staff Choice)').item.json; } catch (e) {}\nif (!req) { try { req = $('Prepare Availability Query (Reschedule)').item.json; } catch (e) {} }\nif (!req) { try { req = $('Slot Taken -> Retry Availability').item.json; } catch (e) {} }\nreturn { json: { staff_id: req.staff_id, service_id: req.service_id, tenant_id: req.tenant_id, customer_id: req.customer_id, reschedule_of: req.reschedule_of, days: $json.days || {} } };"
+            }
+        },
+        {
+            "id": "aggregate_slots",
+            "name": "Aggregate & Build Slots Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3000,
+                -70
+            ],
+            "parameters": {
+                "mode": "runOnceForAllItems",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst ctx = $('Attach Request Context').item.json;\nconst staffList = $json.data || [];\nconst staffMatch = staffList.find(s => s.id === ctx.staff_id);\nconst staffName = staffMatch ? staffMatch.name : ctx.staff_id;\nconst days = ctx.days || {};\nlet allSlots = [];\nfor (const date of Object.keys(days).sort()) {\n  for (const t of (days[date] || [])) {\n    allSlots.push({ staff_id: ctx.staff_id, service_id: ctx.service_id, date, time: t });\n  }\n}\nconst top = allSlots.slice(0, 9);\nconst rows = top.map((s) => ({ id: 'slot_' + s.staff_id + '|' + s.service_id + '|' + s.date + 'T' + s.time, title: (s.date + ' ' + s.time).substring(0, 24), description: ('Personel: ' + staffName).substring(0, 72) }));\nrows.push({ id: 'back_to_staff', title: '◀ Geri (Personel)' });\nconst rescheduleOf = ctx.reschedule_of || null;\nconst bodyText = top.length > 0 ? '🗓️ Sizin için uygun saatler:' : '😕 Önümüzdeki 7 günde uygun saat bulunamadı. Lütfen bizi arayın.';\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_slots_' + Date.now(), interactive: { type: 'list', body: { text: bodyText }, action: { button: 'Saat Seç', sections: [ { title: 'Uygun Saatler', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_slot_selection', context: { service_id: ctx.service_id || null, staff_id: ctx.staff_id || null, reschedule_of: rescheduleOf } };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
+            }
+        },
+        {
+            "id": "http_send_slots_msg",
+            "name": "Send Slots List",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3240,
+                -70
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_slot",
+            "name": "Patch State: Awaiting Slot",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3480,
+                -70
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Aggregate & Build Slots Msg').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Aggregate & Build Slots Msg').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok2",
+            "name": "Respond OK (staff_chosen/reschedule/retry)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3720,
+                -70
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'slot_list_sent' } }}"
+            }
+        },
+        {
+            "id": "sign_post_appointment",
+            "name": "Sign: Post Appointment",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                550
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nlet staffId, serviceId, startTime, rescheduleOf;\nif (dr.flow_response) {\n  staffId = dr.flow_response.staff_id;\n  serviceId = dr.flow_response.service_id;\n  // Flow'un DatePicker/RadioButtonsGroup'u ayri 'date'/'time' alanlari doner (n8n slot_chosen'daki\n  // birlesik 'HH:MM' reply id'sinden farkli); TR sabit +03:00 kurali (PHASE_17) ayni sekilde uygulanir.\n  startTime = dr.flow_response.date + 'T' + dr.flow_response.time + ':00+03:00';\n  rescheduleOf = dr.flow_response.reschedule_of || null;\n} else {\n  const rest = dr.reply_id.replace('slot_', '');\n  const parts = rest.split('|');\n  staffId = parts[0];\n  serviceId = parts[1];\n  startTime = parts[2] + ':00+03:00';\n  rescheduleOf = (dr.state_context && dr.state_context.reschedule_of) || null;\n}\nconst idempotencyKey = dr.customer_id + '_' + serviceId + '_' + startTime;\nconst bodyObj = { tenant_id: dr.tenant_id, staff_id: staffId, service_id: serviceId, start_time: startTime, customer_id: dr.customer_id, idempotency_key: idempotencyKey };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\n// Reschedule tek cagri (BACKLOG m.22): cancel+yeni yerine PATCH /appointments/{id}/reschedule\nconst reschedBody = rescheduleOf ? JSON.stringify({ tenant_id: dr.tenant_id, start_time: startTime }) : null;\nconst reschedSignature = reschedBody ? crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(reschedBody).digest('hex') : null;\nreturn { json: { body_str: bodyStr, signature: signature, staff_id: staffId, service_id: serviceId, tenant_id: dr.tenant_id, customer_id: dr.customer_id, reschedule_of: rescheduleOf, start_time: startTime, resched_body_str: reschedBody, resched_signature: reschedSignature, get_signature: dr.get_signature } };"
+            }
+        },
+        {
+            "id": "http_post_appointment",
+            "name": "Post Appointment",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                550
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.signature}}"
+                        }
+                    ]
+                },
+                "options": {
+                    "response": {
+                        "response": {
+                            "neverError": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "id": "if_is_reschedule_slot",
+            "name": "Is Reschedule (slot)?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                2160,
+                420
+            ],
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{$json.reschedule_of || ''}}",
+                            "value2": "",
+                            "operation": "notEqual"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "http_patch_reschedule",
+            "name": "Patch Reschedule Appointment",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                380
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.reschedule_of}}/reschedule",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.resched_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.resched_signature}}"
+                        }
+                    ]
+                },
+                "options": {
+                    "response": {
+                        "response": {
+                            "neverError": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "id": "if_slot_taken",
+            "name": "If Slot Taken",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
+                2520,
+                550
+            ],
+            "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{$json.error || ''}}",
+                            "value2": "",
+                            "operation": "equal"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "build_confirm_buttons_message",
+            "name": "Build Confirm Buttons Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2760,
+                450
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst sp = $('Sign: Post Appointment').item.json;\nconst appt = $json.data;\nlet sendBody, stateBody;\nif (sp.reschedule_of && appt.status === 'confirmed') {\n  // Onayli randevunun saati degisti (BACKLOG m.22): durum zaten confirmed, yeni onay\n  // dongusu gerekmez - bilgi mesaji + idle state yeterli.\n  sendBody = { tenant_id: sp.tenant_id, type: 'text', customer_id: sp.customer_id, idempotency_key: appt.id + '_rescheduled_' + sp.start_time, text: '🔄 Randevunuz *' + sp.start_time.replace('T', ' ').slice(0, 16) + '* saatine taşındı!' };\n  stateBody = { tenant_id: sp.tenant_id, customer_id: sp.customer_id, step: 'idle', context: {} };\n} else {\n  // Yeni randevu VEYA henuz onaylanmamis (pending) bir randevunun saati degisti: her iki\n  // durumda da gercek onay hala alinmamis - Onayla/Iptal/SaatDegistir dongusu tekrar gosterilir.\n  const buttons = [\n    { type: 'reply', reply: { id: 'confirm_' + appt.id, title: '✅ Onayla' } },\n    { type: 'reply', reply: { id: 'cancel_' + appt.id, title: '❌ İptal Et' } },\n    { type: 'reply', reply: { id: 'reschedule_' + appt.id + '|' + sp.service_id + '|' + sp.staff_id, title: '🕐 Saat Değiştir' } },\n  ];\n  const bodyText = sp.reschedule_of ? '📅 Randevunuz güncellendi (beklemede). Onaylıyor musunuz?' : '📅 Randevunuz oluşturuldu (beklemede). Onaylıyor musunuz?';\n  sendBody = { tenant_id: sp.tenant_id, type: 'interactive', customer_id: sp.customer_id, idempotency_key: appt.id + '_summary_' + appt.updated_at, interactive: { type: 'button', body: { text: bodyText }, action: { buttons: buttons } } };\n  stateBody = { tenant_id: sp.tenant_id, customer_id: sp.customer_id, step: 'awaiting_appointment_action', context: { appointment_id: appt.id } };\n}\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature, reschedule_of: sp.reschedule_of } };"
+            }
+        },
+        {
+            "id": "http_send_confirm_buttons",
+            "name": "Send Confirm Buttons",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3000,
+                450
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_action",
+            "name": "Patch State: Awaiting Action",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3720,
+                450
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Build Confirm Buttons Msg').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Build Confirm Buttons Msg').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok3",
+            "name": "Respond OK (slot_chosen)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3960,
+                450
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'slot_chosen' } }}"
+            }
+        },
+        {
+            "id": "sign_confirm",
+            "name": "Sign: Confirm Appointment",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                900
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst appointmentId = dr.reply_id.replace('confirm_', '');\nconst bodyObj = { tenant_id: dr.tenant_id };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'idle', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { appointment_id: appointmentId, body_str: bodyStr, signature: signature, state_body_str: stateBodyStr, state_signature: stateSignature, tenant_id: dr.tenant_id, customer_id: dr.customer_id } };"
+            }
+        },
+        {
+            "id": "http_patch_confirm",
+            "name": "Patch Confirm Appointment",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                900
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.appointment_id}}/confirm",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "build_confirm_msg",
+            "name": "Build Confirm Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2520,
+                900
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst sc = $('Sign: Confirm Appointment').item.json;\nconst appt = $json.data;\nconst timeRange = appt.time_range || '';\nconst sendBody = { tenant_id: sc.tenant_id, type: 'interactive', customer_id: sc.customer_id, idempotency_key: sc.appointment_id + '_confirmed_notice', interactive: { type: 'button', body: { text: '✅ *Randevunuz onaylandı:* ' + timeRange + '. Sizi bekliyoruz! 💈' }, action: { buttons: [ { type: 'reply', reply: { id: 'noop_confirmed', title: 'Teşekkürler' } } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
+            }
+        },
+        {
+            "id": "http_send_confirm_msg",
+            "name": "Send Confirm Msg",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2760,
+                900
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_idle_confirm",
+            "name": "Patch State: Idle (confirm)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3000,
+                900
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Sign: Confirm Appointment').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Sign: Confirm Appointment').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok4",
+            "name": "Respond OK (confirm)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3240,
+                900
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'confirm' } }}"
+            }
+        },
+        {
+            "id": "sign_cancel",
+            "name": "Sign: Cancel Appointment",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                1150
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst appointmentId = dr.reply_id.replace('cancel_', '');\nconst bodyObj = { tenant_id: dr.tenant_id };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'idle', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { appointment_id: appointmentId, body_str: bodyStr, signature: signature, state_body_str: stateBodyStr, state_signature: stateSignature, tenant_id: dr.tenant_id, customer_id: dr.customer_id } };"
+            }
+        },
+        {
+            "id": "http_patch_cancel",
+            "name": "Patch Cancel Appointment",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                1150
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.appointment_id}}/cancel",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "build_cancel_msg",
+            "name": "Build Cancel Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2520,
+                1150
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst sc = $('Sign: Cancel Appointment').item.json;\nconst sendBody = { tenant_id: sc.tenant_id, type: 'interactive', customer_id: sc.customer_id, idempotency_key: sc.appointment_id + '_cancelled_notice', interactive: { type: 'button', body: { text: '❌ Randevunuz iptal edildi. Tekrar görüşmek dileğiyle!' }, action: { buttons: [ { type: 'reply', reply: { id: 'noop_cancelled', title: 'Tamam' } } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
+            }
+        },
+        {
+            "id": "http_send_cancel_msg",
+            "name": "Send Cancel Msg",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2760,
+                1150
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "sign_ai_respond",
+            "name": "Sign: AI Respond",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                1400
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst em = $('Extract Message').item.json;\nconst customerMessage = (em.text_body && String(em.text_body).trim()) || 'Musteri menu disi ya da anlasilamayan bir mesaj gonderdi.';\nconst bodyObj = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, customer_message: customerMessage, conversation_state: dr.state_context || {} };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature: signature, tenant_id: dr.tenant_id, customer_id: dr.customer_id } };"
+            }
+        },
+        {
+            "id": "http_ai_respond",
+            "name": "AI Respond",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                1400
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/ai/respond",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.signature}}"
+                        }
+                    ]
+                },
+                "options": {
+                    "response": {
+                        "response": {
+                            "neverError": true
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "id": "build_ai_reply",
+            "name": "Build AI Reply Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2520,
+                1400
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst sa = $('Sign: AI Respond').item.json;\nconst resp = $json.data || {};\nlet reply = resp.reply || 'Su an bu mesaji otomatik yanitlayamiyorum. Lutfen menuden bir secim yaparak devam edin.';\nconst intent = resp.intent || 'unclear';\n// 07 AI Module.md 2 adim 6: islemsel niyette musteriyi yapilandirilmis akisa yonlendir.\nif (intent === 'appointment_action') { reply = reply + '\\n\\nRandevu islemleri icin lutfen \\\"randevu\\\" yazarak menuyu baslatabilirsiniz.'; }\nconst sendBody = { tenant_id: sa.tenant_id, type: 'text', customer_id: sa.customer_id, idempotency_key: sa.customer_id + '_ai_' + Date.now(), text: reply };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, intent: intent } };"
+            }
+        },
+        {
+            "id": "http_send_ai_reply",
+            "name": "Send AI Reply",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2760,
+                1400
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_unhandled",
+            "name": "Respond OK (ai)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3000,
+                1400
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'ai' } }}"
+            }
+        },
+        {
+            "id": "build_flow_trigger_msg",
+            "name": "Build Flow Trigger Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                -930
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $json;\nconst sendBody = { tenant_id: dr.tenant_id, type: 'flow', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_flow_' + Date.now(), body_text: '💈 Randevu almak için aşağıdaki formu doldurun:', flow_data: {} };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
+            }
+        },
+        {
+            "id": "http_send_flow_trigger",
+            "name": "Send Flow Trigger",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                -930
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_get_customer_appointments",
+            "name": "Get Customer Appointments",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                -700
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments?tenant_id={{$('Determine Route').item.json.tenant_id}}&customer_id={{$('Determine Route').item.json.customer_id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Determine Route').item.json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_get_customer_appointments_list",
+            "name": "Get Customer Appointments (List)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2040,
+                1450
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments?tenant_id={{$('Determine Route').item.json.tenant_id}}&customer_id={{$('Determine Route').item.json.customer_id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Determine Route').item.json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "build_appointments_list_msg",
+            "name": "Build Appointments List Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2280,
+                1450
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst appts = ($json.data || []).filter(a => a.status === 'pending' || a.status === 'confirmed');\nconst rows = appts.slice(0, 10).map(a => {\n  const range = String(a.time_range || '');\n  const startRaw = range.replace(/[\\[\\(\"]/g, '').split(',')[0];\n  const display = startRaw.slice(0, 16);\n  return {\n    id: 'my_appointment_' + a.id + '|' + a.service_id + '|' + a.staff_id,\n    title: display,\n    description: ((a.service_name || '') + ' - ' + (a.staff_name || '') + (a.status === 'pending' ? ' (beklemede)' : '')).substring(0, 72),\n  };\n});\nlet sendBody;\nif (rows.length > 0) {\n  sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_myappts_' + Date.now(), interactive: { type: 'list', body: { text: '📋 Randevularınız:' }, action: { button: 'Randevu Seç', sections: [ { title: 'Randevularınız', rows: rows } ] } } };\n} else {\n  sendBody = { tenant_id: dr.tenant_id, type: 'text', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_myappts_empty_' + Date.now(), text: '📭 Aktif randevunuz bulunmuyor.' };\n}\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'idle', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
+            }
+        },
+        {
+            "id": "http_send_appointments_list",
+            "name": "Send Appointments List",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2520,
+                1450
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_idle_myappts",
+            "name": "Patch State: Idle (my_appointments)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2760,
+                1450
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Build Appointments List Msg').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Build Appointments List Msg').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok_my_appointments",
+            "name": "Respond OK (my_appointments)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                3000,
+                1450
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'my_appointments' } }}"
+            }
+        },
+        {
+            "id": "build_manage_appointment_msg",
+            "name": "Build Manage Appointment Msg",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2040,
+                1700
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst rest = dr.reply_id.replace('my_appointment_', '');\nconst parts = rest.split('|');\nconst appointmentId = parts[0];\nconst serviceId = parts[1];\nconst staffId = parts[2];\nconst buttons = [\n  { type: 'reply', reply: { id: 'cancel_' + appointmentId, title: '❌ İptal Et' } },\n  { type: 'reply', reply: { id: 'reschedule_' + appointmentId + '|' + serviceId + '|' + staffId, title: '🕐 Saat Değiştir' } },\n];\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: appointmentId + '_manage_' + Date.now(), interactive: { type: 'button', body: { text: '📅 Bu randevunuz için ne yapmak istersiniz?' }, action: { buttons: buttons } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'idle', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
+            }
+        },
+        {
+            "id": "http_send_manage_buttons",
+            "name": "Send Manage Buttons",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                1700
+            ],
+            "parameters": {
+                "method": "POST",
+                "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$json.send_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$json.send_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "http_patch_state_idle_manage",
+            "name": "Patch State: Idle (manage)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2520,
+                1700
+            ],
+            "parameters": {
+                "method": "PATCH",
+                "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{$('Build Manage Appointment Msg').item.json.state_body_str}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        },
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Build Manage Appointment Msg').item.json.state_signature}}"
+                        }
+                    ]
+                },
+                "options": []
+            }
+        },
+        {
+            "id": "respond_ok_appointment_selected",
+            "name": "Respond OK (appointment_selected)",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                2760,
+                1700
+            ],
+            "parameters": {
+                "respondWith": "json",
+                "responseCode": 200,
+                "responseBody": "={{ { status: 'handled', route: 'appointment_selected' } }}"
+            }
+        },
+        {
+            "id": "http_get_customer_appointments_after_cancel",
+            "name": "Get Customer Appointments (after cancel)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                3000,
+                1150
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/appointments?tenant_id={{$('Sign: Cancel Appointment').item.json.tenant_id}}&customer_id={{$('Sign: Cancel Appointment').item.json.customer_id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Determine Route').item.json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": {}
+            }
+        },
+        {
+            "id": "http_get_staff_name_for_slots",
+            "name": "Get Staff Name For Slots",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2280,
+                -220
+            ],
+            "parameters": {
+                "method": "GET",
+                "url": "={{$env.BACKEND_BASE_URL}}/staff?tenant_id={{$json.tenant_id}}&service_id={{$json.service_id}}",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "X-Signature",
+                            "value": "={{$('Determine Route').item.json.get_signature}}"
+                        }
+                    ]
+                },
+                "options": {}
+            }
         }
-      }
-    },
-    {
-      "id": "http_get_services",
-      "name": "Get Services",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2040,
-        -700
-      ],
-      "parameters": {
-        "method": "GET",
-        "url": "={{$env.BACKEND_BASE_URL}}/services?tenant_id={{$json.tenant_id}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-Signature",
-              "value": "={{$json.get_signature}}"
-            }
-          ]
+    ],
+    "connections": {
+        "Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Verify Backend Signature",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "build_services_message",
-      "name": "Build Services List Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2280,
-        -700
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst services = ($json.data || []).filter(s => s.active !== false);\nconst rows = services.slice(0, 10).map(s => ({ id: 'svc_' + s.id, title: String(s.name).substring(0, 24), description: (s.duration_minutes + ' dk - ' + s.price + ' TL').substring(0, 72) }));\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_services_' + Date.now(), interactive: { type: 'list', body: { text: '👋 Merhaba! Hangi hizmeti almak istersiniz?' }, action: { button: 'Hizmet Seç', sections: [ { title: 'Hizmetler', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_service_selection', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
-      }
-    },
-    {
-      "id": "http_send_services_msg",
-      "name": "Send Services List",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2520,
-        -700
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
+        "Verify Backend Signature": {
+            "main": [
+                [
+                    {
+                        "node": "Signature Valid?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "http_patch_state_service",
-      "name": "Patch State: Awaiting Service",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2760,
-        -700
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$('Build Services List Msg').item.json.state_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$('Build Services List Msg').item.json.state_signature}}"
-            }
-          ]
+        "Signature Valid?": {
+            "main": [
+                [
+                    {
+                        "node": "Extract Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Respond 403",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_ok0",
-      "name": "Respond OK (new_session)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3000,
-        -700
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'new_session' } }}"
-      }
-    },
-    {
-      "id": "http_get_staff",
-      "name": "Get Staff For Service",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2040,
-        -450
-      ],
-      "parameters": {
-        "method": "GET",
-        "url": "={{$env.BACKEND_BASE_URL}}/staff?tenant_id={{$json.tenant_id}}&service_id={{$json.reply_id.startsWith('svc_') ? $json.reply_id.replace('svc_','') : $json.state_context.service_id}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-Signature",
-              "value": "={{$json.get_signature}}"
-            }
-          ]
+        "Extract Message": {
+            "main": [
+                [
+                    {
+                        "node": "Has Message?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "build_staff_message",
-      "name": "Build Staff List Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2280,
-        -450
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst serviceId = dr.reply_id.startsWith('svc_') ? dr.reply_id.replace('svc_', '') : (dr.state_context && dr.state_context.service_id);\nconst staffList = ($json.data || []).filter(s => s.active !== false);\nconst staffIds = staffList.map(s => s.id);\nconst rows = staffList.slice(0, 8).map(s => ({ id: 'staff_' + s.id, title: String(s.name).substring(0, 24) }));\nif (staffIds.length > 1) { rows.push({ id: 'staff_any', title: 'Farketmez' }); }\nrows.push({ id: 'back_to_service', title: '◀ Geri (Hizmetler)' });\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_staff_' + Date.now(), interactive: { type: 'list', body: { text: '💈 Hangi ustamızdan hizmet almak istersiniz?' }, action: { button: 'Personel Seç', sections: [ { title: 'Personeller', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_staff_selection', context: { service_id: serviceId, staff_ids: staffIds } };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
-      }
-    },
-    {
-      "id": "http_send_staff_msg",
-      "name": "Send Staff List",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2520,
-        -450
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
+        "Has Message?": {
+            "main": [
+                [
+                    {
+                        "node": "Sign: Upsert Customer",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Respond Ignored",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "http_patch_state_staff",
-      "name": "Patch State: Awaiting Staff",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2760,
-        -450
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$('Build Staff List Msg').item.json.state_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$('Build Staff List Msg').item.json.state_signature}}"
-            }
-          ]
+        "Sign: Upsert Customer": {
+            "main": [
+                [
+                    {
+                        "node": "Upsert Customer",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_ok1",
-      "name": "Respond OK (service_chosen)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3000,
-        -450
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'service_chosen' } }}"
-      }
-    },
-    {
-      "id": "prep_avail_staff",
-      "name": "Prepare Availability Query (Staff Choice)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        -200
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const dr = $('Determine Route').first().json;\nconst ctx = dr.state_context || {};\nconst replyId = dr.reply_id;\nlet staffId;\nif (replyId === 'staff_any') { staffId = (ctx.staff_ids || [])[0]; } else { staffId = replyId.replace('staff_', ''); }\nconst serviceId = ctx.service_id;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: null } }];"
-      }
-    },
-    {
-      "id": "prep_avail_reschedule",
-      "name": "Prepare Availability Query (Reschedule)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        60
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const dr = $('Determine Route').first().json;\nconst rest = dr.reply_id.replace('reschedule_', '');\nconst parts = rest.split('|');\nconst oldAppointmentId = parts[0];\nconst serviceId = parts[1];\nconst staffId = parts[2];\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: oldAppointmentId } }];"
-      }
-    },
-    {
-      "id": "retry_availability",
-      "name": "Slot Taken -> Retry Availability",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2280,
-        320
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const dr = $('Determine Route').first().json;\nconst sp = $('Sign: Post Appointment').first().json;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: sp.service_id, staff_id: sp.staff_id, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: sp.reschedule_of || null } }];"
-      }
-    },
-    {
-      "id": "http_get_availability",
-      "name": "Get Availability",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2520,
-        -70
-      ],
-      "parameters": {
-        "method": "GET",
-        "url": "={{$env.BACKEND_BASE_URL}}/availability?tenant_id={{$json.tenant_id}}&service_id={{$json.service_id}}&staff_id={{$json.staff_id}}&date={{$json.date}}&days={{$json.days}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-Signature",
-              "value": "={{$json.get_signature}}"
-            }
-          ]
+        "Upsert Customer": {
+            "main": [
+                [
+                    {
+                        "node": "Get Conversation State",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Sign: Log Inbound",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "attach_request_context",
-      "name": "Attach Request Context",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2760,
-        -70
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "let req;\ntry { req = $('Prepare Availability Query (Staff Choice)').item.json; } catch (e) {}\nif (!req) { try { req = $('Prepare Availability Query (Reschedule)').item.json; } catch (e) {} }\nif (!req) { try { req = $('Slot Taken -> Retry Availability').item.json; } catch (e) {} }\nreturn { json: { staff_id: req.staff_id, service_id: req.service_id, tenant_id: req.tenant_id, customer_id: req.customer_id, reschedule_of: req.reschedule_of, days: $json.days || {} } };"
-      }
-    },
-    {
-      "id": "aggregate_slots",
-      "name": "Aggregate & Build Slots Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        3000,
-        -70
-      ],
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst ctx = $json;\nconst days = ctx.days || {};\nlet allSlots = [];\nfor (const date of Object.keys(days).sort()) {\n  for (const t of (days[date] || [])) {\n    allSlots.push({ staff_id: ctx.staff_id, service_id: ctx.service_id, date, time: t });\n  }\n}\nconst top = allSlots.slice(0, 9);\nconst rows = top.map((s) => ({ id: 'slot_' + s.staff_id + '|' + s.service_id + '|' + s.date + 'T' + s.time, title: (s.date + ' ' + s.time).substring(0, 24), description: 'Personel: ' + s.staff_id }));\nrows.push({ id: 'back_to_staff', title: '◀ Geri (Personel)' });\nconst rescheduleOf = ctx.reschedule_of || null;\nconst bodyText = top.length > 0 ? '🗓️ Sizin için uygun saatler:' : '😕 Önümüzdeki 7 günde uygun saat bulunamadı. Lütfen bizi arayın.';\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_slots_' + Date.now(), interactive: { type: 'list', body: { text: bodyText }, action: { button: 'Saat Seç', sections: [ { title: 'Uygun Saatler', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_slot_selection', context: { service_id: ctx.service_id || null, staff_id: ctx.staff_id || null, reschedule_of: rescheduleOf } };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn [{ json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } }];"
-      }
-    },
-    {
-      "id": "http_send_slots_msg",
-      "name": "Send Slots List",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3240,
-        -70
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
+        "Sign: Log Inbound": {
+            "main": [
+                [
+                    {
+                        "node": "Log Inbound Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "http_patch_state_slot",
-      "name": "Patch State: Awaiting Slot",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3480,
-        -70
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$('Aggregate & Build Slots Msg').item.json.state_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$('Aggregate & Build Slots Msg').item.json.state_signature}}"
-            }
-          ]
+        "Get Conversation State": {
+            "main": [
+                [
+                    {
+                        "node": "Determine Route",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_ok2",
-      "name": "Respond OK (staff_chosen/reschedule/retry)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3720,
-        -70
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'slot_list_sent' } }}"
-      }
-    },
-    {
-      "id": "sign_post_appointment",
-      "name": "Sign: Post Appointment",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        550
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nlet staffId, serviceId, startTime, rescheduleOf;\nif (dr.flow_response) {\n  staffId = dr.flow_response.staff_id;\n  serviceId = dr.flow_response.service_id;\n  // Flow'un DatePicker/RadioButtonsGroup'u ayri 'date'/'time' alanlari doner (n8n slot_chosen'daki\n  // birlesik 'HH:MM' reply id'sinden farkli); TR sabit +03:00 kurali (PHASE_17) ayni sekilde uygulanir.\n  startTime = dr.flow_response.date + 'T' + dr.flow_response.time + ':00+03:00';\n  rescheduleOf = dr.flow_response.reschedule_of || null;\n} else {\n  const rest = dr.reply_id.replace('slot_', '');\n  const parts = rest.split('|');\n  staffId = parts[0];\n  serviceId = parts[1];\n  startTime = parts[2] + ':00+03:00';\n  rescheduleOf = (dr.state_context && dr.state_context.reschedule_of) || null;\n}\nconst idempotencyKey = dr.customer_id + '_' + serviceId + '_' + startTime;\nconst bodyObj = { tenant_id: dr.tenant_id, staff_id: staffId, service_id: serviceId, start_time: startTime, customer_id: dr.customer_id, idempotency_key: idempotencyKey };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\n// Reschedule tek cagri (BACKLOG m.22): cancel+yeni yerine PATCH /appointments/{id}/reschedule\nconst reschedBody = rescheduleOf ? JSON.stringify({ tenant_id: dr.tenant_id, start_time: startTime }) : null;\nconst reschedSignature = reschedBody ? crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(reschedBody).digest('hex') : null;\nreturn { json: { body_str: bodyStr, signature: signature, staff_id: staffId, service_id: serviceId, tenant_id: dr.tenant_id, customer_id: dr.customer_id, reschedule_of: rescheduleOf, start_time: startTime, resched_body_str: reschedBody, resched_signature: reschedSignature, get_signature: dr.get_signature } };"
-      }
-    },
-    {
-      "id": "http_post_appointment",
-      "name": "Post Appointment",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2280,
-        550
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/appointments",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.signature}}"
-            }
-          ]
+        "Determine Route": {
+            "main": [
+                [
+                    {
+                        "node": "Route",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         },
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
+        "Route": {
+            "main": [
+                [
+                    {
+                        "node": "Get Services",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Get Staff For Service",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Prepare Availability Query (Staff Choice)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Sign: Post Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Sign: Confirm Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Sign: Cancel Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Prepare Availability Query (Reschedule)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Get Services",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Get Staff For Service",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Sign: Post Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Get Customer Appointments (List)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Build Manage Appointment Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Sign: AI Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Services": {
+            "main": [
+                [
+                    {
+                        "node": "Get Customer Appointments",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Services List Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Services List",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Services List": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Awaiting Service",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Awaiting Service": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (new_session)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Staff For Service": {
+            "main": [
+                [
+                    {
+                        "node": "Build Staff List Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Staff List Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Staff List",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Staff List": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Awaiting Staff",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Awaiting Staff": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (service_chosen)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Availability Query (Staff Choice)": {
+            "main": [
+                [
+                    {
+                        "node": "Get Availability",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Availability Query (Reschedule)": {
+            "main": [
+                [
+                    {
+                        "node": "Get Availability",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Slot Taken -> Retry Availability": {
+            "main": [
+                [
+                    {
+                        "node": "Get Availability",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Availability": {
+            "main": [
+                [
+                    {
+                        "node": "Attach Request Context",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Attach Request Context": {
+            "main": [
+                [
+                    {
+                        "node": "Get Staff Name For Slots",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Aggregate & Build Slots Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Slots List",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Slots List": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Awaiting Slot",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Awaiting Slot": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (staff_chosen/reschedule/retry)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Sign: Post Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "Is Reschedule (slot)?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Reschedule (slot)?": {
+            "main": [
+                [
+                    {
+                        "node": "Patch Reschedule Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Post Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch Reschedule Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "If Slot Taken",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Post Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "If Slot Taken",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "If Slot Taken": {
+            "main": [
+                [
+                    {
+                        "node": "Build Confirm Buttons Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Slot Taken -> Retry Availability",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Confirm Buttons Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Confirm Buttons",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Confirm Buttons": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Awaiting Action",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Awaiting Action": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (slot_chosen)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Sign: Confirm Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "Patch Confirm Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch Confirm Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "Build Confirm Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Confirm Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Confirm Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Confirm Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Idle (confirm)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Idle (confirm)": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (confirm)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Sign: Cancel Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "Patch Cancel Appointment",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch Cancel Appointment": {
+            "main": [
+                [
+                    {
+                        "node": "Build Cancel Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Cancel Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Cancel Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Cancel Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Get Customer Appointments (after cancel)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Sign: AI Respond": {
+            "main": [
+                [
+                    {
+                        "node": "AI Respond",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Respond": {
+            "main": [
+                [
+                    {
+                        "node": "Build AI Reply Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build AI Reply Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send AI Reply",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send AI Reply": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (ai)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Flow Trigger Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Flow Trigger",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Flow Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (new_session)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Customer Appointments": {
+            "main": [
+                [
+                    {
+                        "node": "Build Services List Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Customer Appointments (List)": {
+            "main": [
+                [
+                    {
+                        "node": "Build Appointments List Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Appointments List Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Appointments List",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Appointments List": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Idle (my_appointments)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Idle (my_appointments)": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (my_appointments)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Build Manage Appointment Msg": {
+            "main": [
+                [
+                    {
+                        "node": "Send Manage Buttons",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Manage Buttons": {
+            "main": [
+                [
+                    {
+                        "node": "Patch State: Idle (manage)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Patch State: Idle (manage)": {
+            "main": [
+                [
+                    {
+                        "node": "Respond OK (appointment_selected)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Customer Appointments (after cancel)": {
+            "main": [
+                [
+                    {
+                        "node": "Build Appointments List Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get Staff Name For Slots": {
+            "main": [
+                [
+                    {
+                        "node": "Aggregate & Build Slots Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
         }
-      }
     },
-    {
-      "id": "if_is_reschedule_slot",
-      "name": "Is Reschedule (slot)?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        2160,
-        420
-      ],
-      "parameters": {
-        "conditions": {
-          "string": [
-            {
-              "value1": "={{$json.reschedule_of || ''}}",
-              "value2": "",
-              "operation": "notEqual"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "http_patch_reschedule",
-      "name": "Patch Reschedule Appointment",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2280,
-        380
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.reschedule_of}}/reschedule",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.resched_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.resched_signature}}"
-            }
-          ]
-        },
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
-      }
-    },
-    {
-      "id": "if_slot_taken",
-      "name": "If Slot Taken",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        2520,
-        550
-      ],
-      "parameters": {
-        "conditions": {
-          "string": [
-            {
-              "value1": "={{$json.error || ''}}",
-              "value2": "",
-              "operation": "equal"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "build_confirm_buttons_message",
-      "name": "Build Confirm Buttons Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2760,
-        450
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst sp = $('Sign: Post Appointment').item.json;\nconst appt = $json.data;\nlet sendBody, stateBody;\nif (sp.reschedule_of) {\n  // In-place reschedule (BACKLOG m.22): randevu ayni id ile tasindi, durum degismedi —\n  // yeni onay dongusu gerekmez, bilgi mesaji + idle state yeterli.\n  sendBody = { tenant_id: sp.tenant_id, type: 'text', customer_id: sp.customer_id, idempotency_key: appt.id + '_rescheduled_' + sp.start_time, text: '🔄 Randevunuz *' + sp.start_time.replace('T', ' ').slice(0, 16) + '* saatine taşındı!' };\n  stateBody = { tenant_id: sp.tenant_id, customer_id: sp.customer_id, step: 'idle', context: {} };\n} else {\n  const buttons = [\n    { type: 'reply', reply: { id: 'confirm_' + appt.id, title: '✅ Onayla' } },\n    { type: 'reply', reply: { id: 'cancel_' + appt.id, title: '❌ İptal Et' } },\n    { type: 'reply', reply: { id: 'reschedule_' + appt.id + '|' + sp.service_id + '|' + sp.staff_id, title: '🕐 Saat Değiştir' } },\n  ];\n  sendBody = { tenant_id: sp.tenant_id, type: 'interactive', customer_id: sp.customer_id, idempotency_key: appt.id + '_summary', interactive: { type: 'button', body: { text: '📅 Randevunuz oluşturuldu (beklemede). Onaylıyor musunuz?' }, action: { buttons: buttons } } };\n  stateBody = { tenant_id: sp.tenant_id, customer_id: sp.customer_id, step: 'awaiting_appointment_action', context: { appointment_id: appt.id } };\n}\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature, reschedule_of: sp.reschedule_of } };"
-      }
-    },
-    {
-      "id": "http_send_confirm_buttons",
-      "name": "Send Confirm Buttons",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3000,
-        450
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "http_patch_state_action",
-      "name": "Patch State: Awaiting Action",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3720,
-        450
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$('Build Confirm Buttons Msg').item.json.state_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$('Build Confirm Buttons Msg').item.json.state_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_ok3",
-      "name": "Respond OK (slot_chosen)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3960,
-        450
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'slot_chosen' } }}"
-      }
-    },
-    {
-      "id": "sign_confirm",
-      "name": "Sign: Confirm Appointment",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        900
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst appointmentId = dr.reply_id.replace('confirm_', '');\nconst bodyObj = { tenant_id: dr.tenant_id };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'idle', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { appointment_id: appointmentId, body_str: bodyStr, signature: signature, state_body_str: stateBodyStr, state_signature: stateSignature, tenant_id: dr.tenant_id, customer_id: dr.customer_id } };"
-      }
-    },
-    {
-      "id": "http_patch_confirm",
-      "name": "Patch Confirm Appointment",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2280,
-        900
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.appointment_id}}/confirm",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "build_confirm_msg",
-      "name": "Build Confirm Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2520,
-        900
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst sc = $('Sign: Confirm Appointment').item.json;\nconst appt = $json.data;\nconst timeRange = appt.time_range || '';\nconst sendBody = { tenant_id: sc.tenant_id, type: 'interactive', customer_id: sc.customer_id, idempotency_key: sc.appointment_id + '_confirmed_notice', interactive: { type: 'button', body: { text: '✅ *Randevunuz onaylandı:* ' + timeRange + '. Sizi bekliyoruz! 💈' }, action: { buttons: [ { type: 'reply', reply: { id: 'noop_confirmed', title: 'Teşekkürler' } } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
-      }
-    },
-    {
-      "id": "http_send_confirm_msg",
-      "name": "Send Confirm Msg",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2760,
-        900
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "http_patch_state_idle_confirm",
-      "name": "Patch State: Idle (confirm)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3000,
-        900
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$('Sign: Confirm Appointment').item.json.state_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$('Sign: Confirm Appointment').item.json.state_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_ok4",
-      "name": "Respond OK (confirm)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3240,
-        900
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'confirm' } }}"
-      }
-    },
-    {
-      "id": "sign_cancel",
-      "name": "Sign: Cancel Appointment",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        1150
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst appointmentId = dr.reply_id.replace('cancel_', '');\nconst bodyObj = { tenant_id: dr.tenant_id };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'idle', context: {} };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { appointment_id: appointmentId, body_str: bodyStr, signature: signature, state_body_str: stateBodyStr, state_signature: stateSignature, tenant_id: dr.tenant_id, customer_id: dr.customer_id } };"
-      }
-    },
-    {
-      "id": "http_patch_cancel",
-      "name": "Patch Cancel Appointment",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2280,
-        1150
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.appointment_id}}/cancel",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "build_cancel_msg",
-      "name": "Build Cancel Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2520,
-        1150
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst sc = $('Sign: Cancel Appointment').item.json;\nconst sendBody = { tenant_id: sc.tenant_id, type: 'interactive', customer_id: sc.customer_id, idempotency_key: sc.appointment_id + '_cancelled_notice', interactive: { type: 'button', body: { text: '❌ Randevunuz iptal edildi. Tekrar görüşmek dileğiyle!' }, action: { buttons: [ { type: 'reply', reply: { id: 'noop_cancelled', title: 'Tamam' } } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
-      }
-    },
-    {
-      "id": "http_send_cancel_msg",
-      "name": "Send Cancel Msg",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2760,
-        1150
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "http_patch_state_idle_cancel",
-      "name": "Patch State: Idle (cancel)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        3000,
-        1150
-      ],
-      "parameters": {
-        "method": "PATCH",
-        "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$('Sign: Cancel Appointment').item.json.state_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$('Sign: Cancel Appointment').item.json.state_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_ok5",
-      "name": "Respond OK (cancel)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3240,
-        1150
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'cancel' } }}"
-      }
-    },
-    {
-      "id": "sign_ai_respond",
-      "name": "Sign: AI Respond",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        1400
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst em = $('Extract Message').item.json;\nconst customerMessage = (em.text_body && String(em.text_body).trim()) || 'Musteri menu disi ya da anlasilamayan bir mesaj gonderdi.';\nconst bodyObj = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, customer_message: customerMessage, conversation_state: dr.state_context || {} };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature: signature, tenant_id: dr.tenant_id, customer_id: dr.customer_id } };"
-      }
-    },
-    {
-      "id": "http_ai_respond",
-      "name": "AI Respond",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2280,
-        1400
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/ai/respond",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.signature}}"
-            }
-          ]
-        },
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
-        }
-      }
-    },
-    {
-      "id": "build_ai_reply",
-      "name": "Build AI Reply Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2520,
-        1400
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst sa = $('Sign: AI Respond').item.json;\nconst resp = $json.data || {};\nlet reply = resp.reply || 'Su an bu mesaji otomatik yanitlayamiyorum. Lutfen menuden bir secim yaparak devam edin.';\nconst intent = resp.intent || 'unclear';\n// 07 AI Module.md 2 adim 6: islemsel niyette musteriyi yapilandirilmis akisa yonlendir.\nif (intent === 'appointment_action') { reply = reply + '\\n\\nRandevu islemleri icin lutfen \\\"randevu\\\" yazarak menuyu baslatabilirsiniz.'; }\nconst sendBody = { tenant_id: sa.tenant_id, type: 'text', customer_id: sa.customer_id, idempotency_key: sa.customer_id + '_ai_' + Date.now(), text: reply };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, intent: intent } };"
-      }
-    },
-    {
-      "id": "http_send_ai_reply",
-      "name": "Send AI Reply",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2760,
-        1400
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
-    },
-    {
-      "id": "respond_unhandled",
-      "name": "Respond OK (ai)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        3000,
-        1400
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseCode": 200,
-        "responseBody": "={{ { status: 'handled', route: 'ai' } }}"
-      }
-    },
-    {
-      "id": "build_flow_trigger_msg",
-      "name": "Build Flow Trigger Msg",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2040,
-        -930
-      ],
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst dr = $json;\nconst sendBody = { tenant_id: dr.tenant_id, type: 'flow', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_flow_' + Date.now(), body_text: '💈 Randevu almak için aşağıdaki formu doldurun:', flow_data: {} };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
-      }
-    },
-    {
-      "id": "http_send_flow_trigger",
-      "name": "Send Flow Trigger",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2280,
-        -930
-      ],
-      "parameters": {
-        "method": "POST",
-        "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json.send_body_str}}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
-            {
-              "name": "X-Signature",
-              "value": "={{$json.send_signature}}"
-            }
-          ]
-        },
-        "options": {}
-      }
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
     }
-  ],
-  "connections": {
-    "Webhook": {
-      "main": [
-        [
-          {
-            "node": "Verify Backend Signature",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Verify Backend Signature": {
-      "main": [
-        [
-          {
-            "node": "Signature Valid?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Signature Valid?": {
-      "main": [
-        [
-          {
-            "node": "Extract Message",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond 403",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract Message": {
-      "main": [
-        [
-          {
-            "node": "Has Message?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Message?": {
-      "main": [
-        [
-          {
-            "node": "Sign: Upsert Customer",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Respond Ignored",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign: Upsert Customer": {
-      "main": [
-        [
-          {
-            "node": "Upsert Customer",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Upsert Customer": {
-      "main": [
-        [
-          {
-            "node": "Get Conversation State",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Sign: Log Inbound",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign: Log Inbound": {
-      "main": [
-        [
-          {
-            "node": "Log Inbound Message",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Conversation State": {
-      "main": [
-        [
-          {
-            "node": "Determine Route",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Determine Route": {
-      "main": [
-        [
-          {
-            "node": "Route",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Route": {
-      "main": [
-        [
-          {
-            "node": "Get Services",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Get Staff For Service",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare Availability Query (Staff Choice)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Sign: Post Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Sign: Confirm Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Sign: Cancel Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Prepare Availability Query (Reschedule)",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Get Services",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Get Staff For Service",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Sign: Post Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Sign: AI Respond",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Services": {
-      "main": [
-        [
-          {
-            "node": "Build Services List Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Services List Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Services List",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Services List": {
-      "main": [
-        [
-          {
-            "node": "Patch State: Awaiting Service",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch State: Awaiting Service": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (new_session)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Staff For Service": {
-      "main": [
-        [
-          {
-            "node": "Build Staff List Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Staff List Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Staff List",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Staff List": {
-      "main": [
-        [
-          {
-            "node": "Patch State: Awaiting Staff",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch State: Awaiting Staff": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (service_chosen)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Availability Query (Staff Choice)": {
-      "main": [
-        [
-          {
-            "node": "Get Availability",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Availability Query (Reschedule)": {
-      "main": [
-        [
-          {
-            "node": "Get Availability",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Slot Taken -> Retry Availability": {
-      "main": [
-        [
-          {
-            "node": "Get Availability",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Availability": {
-      "main": [
-        [
-          {
-            "node": "Attach Request Context",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Attach Request Context": {
-      "main": [
-        [
-          {
-            "node": "Aggregate & Build Slots Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Aggregate & Build Slots Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Slots List",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Slots List": {
-      "main": [
-        [
-          {
-            "node": "Patch State: Awaiting Slot",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch State: Awaiting Slot": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (staff_chosen/reschedule/retry)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign: Post Appointment": {
-      "main": [
-        [
-          {
-            "node": "Is Reschedule (slot)?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is Reschedule (slot)?": {
-      "main": [
-        [
-          {
-            "node": "Patch Reschedule Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Post Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch Reschedule Appointment": {
-      "main": [
-        [
-          {
-            "node": "If Slot Taken",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Post Appointment": {
-      "main": [
-        [
-          {
-            "node": "If Slot Taken",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "If Slot Taken": {
-      "main": [
-        [
-          {
-            "node": "Build Confirm Buttons Msg",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Slot Taken -> Retry Availability",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Confirm Buttons Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Confirm Buttons",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Confirm Buttons": {
-      "main": [
-        [
-          {
-            "node": "Patch State: Awaiting Action",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch State: Awaiting Action": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (slot_chosen)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign: Confirm Appointment": {
-      "main": [
-        [
-          {
-            "node": "Patch Confirm Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch Confirm Appointment": {
-      "main": [
-        [
-          {
-            "node": "Build Confirm Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Confirm Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Confirm Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Confirm Msg": {
-      "main": [
-        [
-          {
-            "node": "Patch State: Idle (confirm)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch State: Idle (confirm)": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (confirm)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign: Cancel Appointment": {
-      "main": [
-        [
-          {
-            "node": "Patch Cancel Appointment",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch Cancel Appointment": {
-      "main": [
-        [
-          {
-            "node": "Build Cancel Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Cancel Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Cancel Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Cancel Msg": {
-      "main": [
-        [
-          {
-            "node": "Patch State: Idle (cancel)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Patch State: Idle (cancel)": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (cancel)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign: AI Respond": {
-      "main": [
-        [
-          {
-            "node": "AI Respond",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AI Respond": {
-      "main": [
-        [
-          {
-            "node": "Build AI Reply Msg",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build AI Reply Msg": {
-      "main": [
-        [
-          {
-            "node": "Send AI Reply",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send AI Reply": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (ai)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Flow Trigger Msg": {
-      "main": [
-        [
-          {
-            "node": "Send Flow Trigger",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Flow Trigger": {
-      "main": [
-        [
-          {
-            "node": "Respond OK (new_session)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
-  },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  }
 }
