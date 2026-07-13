@@ -28,7 +28,7 @@ use DateTimeZone;
  */
 final class AvailabilityService
 {
-    private const STEP_MINUTES = 15;
+    private const STEP_MINUTES = 60;
     private const MIN_LEAD_MINUTES = 30; // "şu andan min. X dk sonra" (03§4 adım 6)
 
     public function __construct(
@@ -117,7 +117,11 @@ final class AvailabilityService
 
         $slots = [];
         foreach ($free as [$start, $end]) {
-            for ($cursor = $start; $cursor + $duration <= $end; $cursor += self::STEP_MINUTES) {
+            // Slotları boş aralığın başından değil, gece yarısına hizalı sabit saat ızgarasından
+            // üret (STEP_MINUTES katları). Böylece önceki bir randevu 14:45'te bitse bile sonraki
+            // slot her zaman temiz saat başı (15:00) olur, mevcut randevulara göre kaymaz.
+            $gridStart = (int) (ceil($start / self::STEP_MINUTES) * self::STEP_MINUTES);
+            for ($cursor = $gridStart; $cursor + $duration <= $end; $cursor += self::STEP_MINUTES) {
                 if ($cursor < $earliestAllowed) {
                     continue;
                 }

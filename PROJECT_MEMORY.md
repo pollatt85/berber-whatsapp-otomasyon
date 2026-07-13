@@ -25,6 +25,14 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
   kullanıcının n8n arayüzünden elle "Publish" tıklaması gerekiyor (detay PHASE_37 madde 3) —
   Claude bunu kimlik bilgisi girme kısıtı yüzünden yapamıyor. Gerçek bir müşteri (kullanıcının
   kendi telefonu) uçtan uca bir randevuyu (14.07.2026 09:00) başarıyla tamamladı.
+- **PHASE_38'de randevu slot akışı kullanıcı geri bildirimiyle sadeleştirildi** (slot 60 dk/saat
+  başı, tek gün, gün-seçim ara adımı denenip geri alındı, serbest-metin iptal niyeti → Randevularım,
+  çalışma saatleri 09-21) ve iki gerçek hata düzeltildi: **(a) slot ızgara-hizalama** (slotlar artık
+  gece yarısına hizalı sabit ızgaradan, önceki randevu bitişine göre kaymıyor); **(b) `/availability`
+  yanıt-şekli mimari düzeltmesi** — endpoint `days=1`/`days>1`'de farklı şekil döndürüyordu (sessiz
+  şekil değişimi = "boş liste" tuzağı), artık **her zaman hem `slots` hem `days`** döner. **Kritik
+  WhatsApp kısıtı doğrulandı:** interactive list maksimum 10 satır (9 slot + Geri) — bu yüzden 30 dk
+  slot liste akışında imkansız; kalıcı çözüm WhatsApp Flows (kodu hazır, publish engeli PHASE_36).
 - **PHASE_34-35'te WhatsApp Flows (randevu formu) kodlandı** (`FlowCrypto`,
   `WhatsAppFlowController`, `WhatsAppNotifier`, `whatsapp-flow/booking_flow.json`; Meta'da
   Flow "Randevu Al (Berber)" `META_FLOW_ID=1602331731897517`, DRAFT). **PHASE_36'da Flow
@@ -50,7 +58,59 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
   n8n queue mode (madde 16, yalnızca ölçekleme aşamasında, dokunulmadı) + backend'in şablon
   dili sabit `tr` olması (yalnızca `en_US` onaylı şablonlarla çakışıyor, aşağıda not).
 
-## Bu Oturumda Yapılanlar (PHASE_37 — Yeni makinede pilot test turu: gerçek ortam kurulumu + 3 gerçek n8n hatası + randevu akışı UX turu)
+## Bu Oturumda Yapılanlar (PHASE_38 — Randevu slot akışı sadeleştirme + /availability yanıt-şekli mimari düzeltmesi)
+
+Hedef: kullanıcı gerçek WhatsApp testleriyle randevu saat listesini iteratif olarak sadeleştirdi
+(saat başı, tek gün) + bu sırada iki gerçek hata (yanıt-şekli tutarsızlığı, slot ızgara kayması)
+bulunup düzeltildi. Aynı makine, PHASE_37 ortamının devamı (ngrok/backend/n8n/Redis yeniden
+başlatıldı, `.env`/WABA/`META_APP_SECRET` zaten kuruluydu). **Kod commit'lendi.**
+
+1. **Slot adımı 15→60 dk** (`AvailabilityService::STEP_MINUTES`) — kullanıcı saat başı istedi.
+   30 dk denendi; 09-21 saatinde günde ~24 slot çıkıyor, WhatsApp interactive list'in **10 satır
+   (9 slot + 1 "Geri") kesin platform limitine** sığmıyor. Bu bir **WhatsApp API kısıtı**, n8n/
+   backend değil (Meta resmi dokümantasyonuyla web araştırmasında doğrulandı). Kalıcı çözüm
+   WhatsApp Flows (PHASE_34-35 kodu hazır; dev hesapta publish integrity kapısına takılı,
+   PHASE_36). Karar: liste akışında saat başı kal.
+2. **Gün-seçim ara adımı: eklendi→geri alındı.** Önce "3 gün" sorununu çözmek için personel
+   sonrası ayrı bir "Gün Seç" listesi (2 gün) + günün saatleri akışı eklendi (`awaiting_day_
+   selection` state, `Build Time List For Day` vb. node'lar). Kullanıcı sonra **tek gün** istedi
+   → tüm gün-seçim node'ları/route'ları/bağlantıları geri çıkarıldı, `Aggregate & Build Slots
+   Msg` tek-gün düz saat listesine döndürüldü (>9 slotta güne yayılmış örnekleme, 60 dk'da
+   normalde gerekmez). **n8n `days` parametresi 3→2→1** (dört Code node'unda).
+3. **İptal niyeti serbest metinden** (`Determine Route`): "iptal"/"vazgeç"/"vazgec" içeren metin
+   artık booking menüsü yerine doğrudan **`my_appointments`** (Randevularım) rotasına gidiyor.
+   AI'ın kendisi iptal YAPMAZ (07_AI_Module.md kararı korundu) — sadece doğru menüye yönlendirir.
+4. **Çalışma saatleri 09-19 → 09-21** (canlı DB `UPDATE working_hours` + `scripts/dev_seed.php`
+   re-seed için) — berber standardı.
+5. **Slot ızgara-hizalama (gerçek UX bug, `AvailabilityService`):** slotlar her boş aralığın
+   BAŞINDAN adımlanıyordu; pending/confirmed bir randevu 14:45'te bitince sonraki boş aralık
+   14:45'te başlıyor, slotlar 14:45/15:45… (veya bloke bitişine göre :30) diye kayıyordu —
+   kullanıcı "saati değiştir"de gördü. **Düzeltme:** `$gridStart = ceil($start/STEP)*STEP` ile
+   slotlar **gece yarısına hizalı sabit ızgaradan** üretiliyor → mevcut randevulardan bağımsız
+   her zaman :00 (60 dk için). 14:00-14:45 pending-blok senaryosuyla test edildi: eskiden 14:45…,
+   artık 15:00, 16:00… .
+6. **MİMARİ DÜZELTME — `/availability` yanıt-şekli tutarsızlığı (GELECEK OTURUM İÇİN KRİTİK):**
+   `AvailabilityController` `days=1`'de `{slots:[]}`, `days>1`'de `{days:{}}` döndürüyordu.
+   Şekil parametreye göre **sessizce değişiyordu**. `days:3→1` değişikliğinde n8n `days` map
+   beklerken boş liste aldı → "Bugün için uygun saat bulunamadı" (backend slotları doğru
+   üretiyordu, sorun tamamen yanıt okumasındaydı; teşhis: imzalı curl ile ham çıktı karşılaştırması).
+   **Düzeltme:** controller artık **her zaman hem `slots` (istenen tek gün) hem `days` (tarih→slot
+   haritası, tek gün olsa bile)** döndürüyor (`slotsForRange(max(1,$days))` + `slots =
+   $daysMap[$date]`). Tek kod yolu; panel (`.slots`, days param'sız) ve n8n (`.days`, fallback
+   `.slots`) ikisi de asla eksik anahtar görmez. 03_Backend_API.md §3.3 `{slots}` sözleşmesi
+   korundu. **Ayrıca n8n `Attach Request Context` da savunma amaçlı iki şekli normalize ediyor**
+   (`{slots}` gelirse `{[date]:slots}`'a çevirir) — çift güvenlik.
+7. **Test verisi temizlendi:** test telefonu `905418255314` ("Test Musteri") + isimsiz
+   `905559998877` müşterileri ve tüm ilişkili randevu (8) / message_log (186) / conversation_state
+   (1) kayıtları tek transaction'da silindi; kalıcı seed müşteriler (Ali Veli, Can Demir) korundu.
+8. **Ortam (oturum sonunda AÇIK):** backend (8000), n8n (5678, workflow publish'li — her import
+   sonrası kullanıcı elle "Publish" tıkladı, PHASE_37 madde 3 prosedürü), Redis (6379), ngrok
+   (`provider-dislodge-bounce.ngrok-free.dev`, artık `--url` bayrağı — `--domain` deprecated).
+   **Not: STEP_MINUTES/DB/controller değişiklikleri backend restart bile gerektirmedi** (PHP
+   built-in server dosyayı her istekte taze okur); yalnızca n8n JSON değişiklikleri Publish
+   gerektirdi.
+
+## Önceki Oturum (PHASE_37 — Yeni makinede pilot test turu: gerçek ortam kurulumu + 3 gerçek n8n hatası + randevu akışı UX turu)
 
 Hedef: kullanıcı "WhatsApp'tan tekrar test edeceğiz" dedi — bu **farklı bir Windows makinesi**
 (kullanıcı `User`, önceki PHASE_30-36 `Lenovo-Thinkpad-E560` idi). `.env`/DB/yerel araçlar git'e

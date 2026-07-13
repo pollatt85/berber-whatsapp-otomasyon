@@ -1258,3 +1258,39 @@ UX turu.** Detaylı analiz `PROJECT_MEMORY.md` PHASE_37'de. Özet:
    Kalfa, Saç Kesimi) başarıyla tamamladı — sistem gerçek trafikte doğrulandı.
 
 **STATUS: PHASE_37_NEW_MACHINE_PILOT_TEST_BUGFIXES_UX_TOUR**
+
+## PHASE_38 — 2026-07-13
+
+**Randevu slot akışı sadeleştirme turu (kullanıcı geri bildirimi) + `/availability` yanıt-şekli
+mimari düzeltmesi.** Aynı makinede (PHASE_37 devamı), gerçek WhatsApp testleriyle iterasyonlu.
+Detay `PROJECT_MEMORY.md` PHASE_38'de. Özet:
+
+1. **Slot adımı 15→60 dk** (`AvailabilityService::STEP_MINUTES`) — kullanıcı isteği: randevular
+   saat başı. 30 dk denendi ama 09-21 çalışma saatinde günde ~24 slot çıkıyor, WhatsApp
+   interactive list'in **10 satır (9 slot + 1 Geri) kesin platform limitine** sığmıyor (Meta
+   resmi dokümantasyonuyla doğrulandı — n8n/backend değil WhatsApp kısıtı). Kalıcı çözüm
+   WhatsApp Flows (PHASE_34-35 kodu hazır, dev hesapta publish engeli var).
+2. **Gün-seçim ara adımı önce eklendi (2 gün), sonra kullanıcı isteğiyle geri alındı** — nihai
+   karar: **tek gün** göster, gün seçim adımı yok. n8n workflow'u tek-gün akışına döndürüldü
+   (eklenen `awaiting_day_selection` node'ları temizlendi); >9 slot durumunda güne yayılmış
+   örnekleme yapılıyor (60 dk'da normalde sığıyor).
+3. **İptal niyeti serbest metinden** (`Determine Route`): "iptal"/"vazgeç" içeren metin artık
+   AI/booking menüsü yerine doğrudan **Randevularım** listesine gidiyor (kullanıcı iptal etmek
+   isterse doğru yere düşsün).
+4. **Çalışma saatleri 09-19 → 09-21** (canlı DB + `scripts/dev_seed.php`) — berber standardı.
+5. **Slot ızgara-hizalama düzeltmesi** (`AvailabilityService`, gerçek UX bug): slotlar boş
+   aralığın başından adımlanıyordu → önceki randevu 14:45'te bitince sonraki slot 14:45, 15:45…
+   diye kayıyordu. Artık **gece yarısına hizalı sabit ızgaradan** (STEP_MINUTES katı) üretiliyor
+   → mevcut randevulardan bağımsız her zaman temiz saat başı (15:00). Pending-blok senaryosuyla
+   doğrulandı.
+6. **MİMARİ DÜZELTME — `/availability` yanıt şekli tutarsızlığı** (gelecek oturum tuzağı):
+   endpoint `days=1`'de `{slots:[]}`, `days>1`'de `{days:{}}` döndürüyordu; şekil parametreye
+   göre sessizce değişiyordu. Bu, `days:3→1` değişikliğinde n8n'in `days` map beklerken boş liste
+   almasına ("Bugün için uygun saat bulunamadı") yol açtı. **Düzeltme:** `AvailabilityController`
+   artık her zaman **hem `slots` (istenen gün) hem `days` (tam harita, tek gün olsa bile)**
+   döndürüyor — tek kod yolu, hiçbir tüketici (panel `.slots`, n8n `.days`) eksik anahtar görmez.
+   03_Backend_API.md §3.3'ün `{slots}` sözleşmesi korundu (ek `days` anahtarı geriye uyumlu).
+7. Test verisi temizlendi (test telefonu `905418255314` + isimsiz `905559998877` müşterileri ve
+   tüm randevu/message_log/state kayıtları; seed müşteriler Ali Veli/Can Demir korundu).
+
+**STATUS: PHASE_38_SLOT_FLOW_SIMPLIFICATION_AVAILABILITY_SHAPE_FIX**

@@ -118,7 +118,7 @@ foreach (['Saç Kesimi', 'Sakal Tıraşı'] as $name) {
     $assign->execute(['t' => $tenantId, 'st' => $staffIds['Mehmet Kalfa'], 'sv' => $serviceIds[$name]]);
 }
 
-// 6. Çalışma saatleri (Pazartesi-Cumartesi 09-19, Pazar kapalı — day_of_week 0=Pazar) + mola
+// 6. Çalışma saatleri (Pazartesi-Cumartesi 09-21, Pazar kapalı — day_of_week 0=Pazar) + mola
 foreach ($staffIds as $staffId) {
     $stmt = $db->prepare('SELECT count(*) FROM working_hours WHERE tenant_id = :t AND staff_id = :s');
     $stmt->execute(['t' => $tenantId, 's' => $staffId]);
@@ -128,7 +128,7 @@ foreach ($staffIds as $staffId) {
              VALUES (:t, :s, :d, :st, :en)'
         );
         foreach ([1, 2, 3, 4, 5, 6] as $day) {
-            $wh->execute(['t' => $tenantId, 's' => $staffId, 'd' => $day, 'st' => '09:00', 'en' => '19:00']);
+            $wh->execute(['t' => $tenantId, 's' => $staffId, 'd' => $day, 'st' => '09:00', 'en' => '21:00']);
         }
         $br = $db->prepare(
             'INSERT INTO breaks (tenant_id, staff_id, day_of_week, start_time, end_time)

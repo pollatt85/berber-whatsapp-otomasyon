@@ -37,27 +37,22 @@ final class AvailabilityController
             throw new ApiException('tenant_not_found', 'Tenant not found.', 404);
         }
 
-        if ($days > 1) {
-            $daysMap = $this->availability->slotsForRange(
-                $tenantId,
-                (string) $staffId,
-                (string) $serviceId,
-                (string) $date,
-                $days,
-                (string) $tenant['timezone']
-            );
-
-            return Response::json(['days' => $daysMap]);
-        }
-
-        $slots = $this->availability->slotsFor(
+        // Yanıt şekli `days` parametresine göre DEĞİŞMEZ: her zaman hem `slots` (istenen tek gün,
+        // panel + 03_Backend_API.md §3.3 sözleşmesi) hem `days` (tarih→slot haritası, tek gün
+        // istense bile) döner. Böylece hiçbir tüketici (panel `.slots`, n8n `.days`) eksik anahtar
+        // görmez — tek yönlü şekil değişimi kaynaklı "boş liste" tuzağı ortadan kalkar.
+        $daysMap = $this->availability->slotsForRange(
             $tenantId,
             (string) $staffId,
             (string) $serviceId,
             (string) $date,
+            max(1, $days),
             (string) $tenant['timezone']
         );
 
-        return Response::json(['slots' => $slots]);
+        return Response::json([
+            'slots' => $daysMap[(string) $date] ?? [],
+            'days' => $daysMap,
+        ]);
     }
 }
