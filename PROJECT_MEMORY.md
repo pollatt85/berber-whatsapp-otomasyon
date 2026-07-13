@@ -13,6 +13,18 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
   Meta ES config ID oluşturuldu + FB.login `extras` düzeltmesi yapıldı** (detay: "Sonraki Oturum
   İçin Öncelik Sırası" madde 1). Kalan tek adım: pilot fazı (08_Test_Pilot.md) — gerçek
   işletmeyle saha çalışması, kod tarafında bekleyen yok.
+- **PHASE_37'de yeni bir makinede (kullanıcı `User`) pilot test turu yapıldı:** ortam sıfırdan
+  kuruldu (ngrok + Avast MITM engeli aşıldı, gerçek `META_APP_SECRET` girildi, gerçek WABA
+  System User token'ıyla bağlandı) ve bu süreçte **3 gerçek kod hatası bulunup düzeltildi**
+  (Embedded Signup yarış durumu, personel-seçimi-sonrası akışı tamamen kıran n8n Code node
+  mode/dizi uyuşmazlığı, backend'i kendi kendine kilitleyen `N8nNotifier` blocking çağrısı) +
+  randevu akışında kullanıcı geri bildirimiyle çok sayıda UX iyileştirmesi (onay mesajı formatı,
+  slot-dolu uyarısı, slot listesi formatı, çalışma günleri Pazar-kapalı'ya değişti, AI artık
+  SSS-dışı mesajlarda sohbet etmeden doğrudan randevu menüsünü açıyor). **Kritik yeni operasyonel
+  not:** n8n 2.28.6'nın yeni publish/versiyon sistemi yüzünden her workflow güncellemesi sonrası
+  kullanıcının n8n arayüzünden elle "Publish" tıklaması gerekiyor (detay PHASE_37 madde 3) —
+  Claude bunu kimlik bilgisi girme kısıtı yüzünden yapamıyor. Gerçek bir müşteri (kullanıcının
+  kendi telefonu) uçtan uca bir randevuyu (14.07.2026 09:00) başarıyla tamamladı.
 - **PHASE_34-35'te WhatsApp Flows (randevu formu) kodlandı** (`FlowCrypto`,
   `WhatsAppFlowController`, `WhatsAppNotifier`, `whatsapp-flow/booking_flow.json`; Meta'da
   Flow "Randevu Al (Berber)" `META_FLOW_ID=1602331731897517`, DRAFT). **PHASE_36'da Flow
@@ -38,7 +50,138 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
   n8n queue mode (madde 16, yalnızca ölçekleme aşamasında, dokunulmadı) + backend'in şablon
   dili sabit `tr` olması (yalnızca `en_US` onaylı şablonlarla çakışıyor, aşağıda not).
 
-## Bu Oturumda Yapılanlar (PHASE_36 — Flow publish engeli kök neden analizi + ödeme düzeltmesi + GitHub push)
+## Bu Oturumda Yapılanlar (PHASE_37 — Yeni makinede pilot test turu: gerçek ortam kurulumu + 3 gerçek n8n hatası + randevu akışı UX turu)
+
+Hedef: kullanıcı "WhatsApp'tan tekrar test edeceğiz" dedi — bu **farklı bir Windows makinesi**
+(kullanıcı `User`, önceki PHASE_30-36 `Lenovo-Thinkpad-E560` idi). `.env`/DB/yerel araçlar git'e
+dahil değil (bilinçli, `.gitignore`) — bu yüzden git pull sonrası bu makinede sıfırdan ortam
+kurulumu + üç gerçek n8n/backend hatası bulunup düzeltildi + kullanıcı geri bildirimiyle randevu
+akışının UX'i bir tur daha iyileştirildi. **Kod tarafı commit'lenip push edildi**, kalan tek
+manuel adım her yeni makinede/n8n restart'ında **workflow'u n8n arayüzünden "Publish"lemek**
+(aşağıda madde 3'te detaylı, artık standart prosedür).
+
+1. **Ortam kurulumu (bu makineye özel, kod değil):**
+   - ngrok bu makinede hiç kurulu değildi — `bin.equinox.io`'dan indirilip
+     `C:\Users\User\ngrok\ngrok.exe` olarak kuruldu (`--ssl-no-revoke` PowerShell/curl cert
+     iptal kontrolü sorunuydu, PHASE_20/28 E9 deseniyle aynı).
+   - **Yeni bulgu — Avast Web/Mail Shield ngrok'u MITM ediyordu:** `ngrok diagnose` "Possible
+     Man-in-the-Middle" verdi; `openssl s_client` ile gerçek sertifika zinciri incelendi →
+     issuer `Avast Web/Mail Shield Untrusted Root`. Kullanıcı Avast'ta istisna ekleyince/Web
+     Shield'ı kapatınca tünel kuruldu. **Bu makineye özel bir bulgu, E9'a ek yeni bir madde
+     olarak düşünülmeli** (Avast varsa aynı sorun tekrar çıkar).
+   - `.env`'deki `META_APP_SECRET` **placeholder** değerdi (`dev_meta_app_secret_...`) — gerçek
+     App Secret hiç girilmemiş. Kullanıcı Meta Dashboard'dan gerçek değeri verdi, `.env`
+     güncellendi. **Bu, webhook'un 403 "Invalid webhook signature" ile sessizce reddedilmesine
+     yol açıyordu** (Meta gerçekten mesaj gönderiyordu, backend imzayı reddediyordu — ngrok
+     inspector'daki `/api/requests/http` geçmişi ile teşhis edildi).
+   - `.env`'de bu makinenin dev tenant'ı **eski/farklı bir WABA'ya** bağlıydı
+     (`phone_number_id=1215172075008488`, `whatsapp_status=disconnected` — muhtemelen eski bir
+     Embedded Signup denemesinden kalma). Gerçek WABA'ya (`1359511886136495` /
+     `1147876331751351`, BerberApp/Test Berber 2 portföyü) yeniden bağlamak için **Embedded
+     Signup denendi ama gerçek bir kod hatası bulundu** (aşağıda madde 2) — bu yüzden PHASE_30
+     desenine dönülüp **System User'dan yeni bir kalıcı token üretilip** (`berber-backend`,
+     Business Settings > System Users, izinler yalnızca `whatsapp_business_management`+
+     `whatsapp_business_messaging`) doğrudan `TenantRepository::connectWhatsApp` ile DB'ye
+     yazıldı (tek seferlik script, iş bitince silindi). `subscribed_apps` zaten BerberApp'e
+     abone görünüyordu (PHASE_31'in düzeltmesi kalıcıymış, WABA seviyesinde saklı).
+2. **Gerçek kod hatası — Embedded Signup'ta yarış durumu (düzeltildi, `views/panel/
+   settings_whatsapp.php`):** `FB.login` callback'i çalıştığında `window.addEventListener
+   ('message', ...)` ile yakalanan `WA_EMBEDDED_SIGNUP`/`FINISH` mesajı henüz gelmemiş
+   olabiliyordu — `submitConnect` anlık kontrol yapıp hemen "Popup'tan WABA/numara bilgisi
+   alınamadı" hatası veriyordu. **Düzeltme:** `submitConnect` artık mesaj gelene kadar max 3sn
+   (100ms aralıklarla) bekliyor, ayrıca hata yolları artık sessizce yutulmuyor (her zaman
+   `showEsResult` ile ekrana basılıyor). Test edilmedi (gerçek onboarding bu oturumda System
+   User yoluyla yapıldı) ama kod incelemesiyle doğrulandı — **sonraki oturumda gerçek Embedded
+   Signup denemesiyle uçtan uca doğrulanmalı.**
+3. **n8n 2.28.6'nın YENİ publish/versiyon sistemi keşfedildi — kritik operasyonel not:**
+   Bu n8n sürümü `workflow_entity.nodes`'u artık "taslak" gibi davranıyor; gerçek çalışan
+   kod `workflow_history`/`workflow_published_version` tablolarına bağlı bir "publish" adımı
+   gerektiriyor. **Doğrudan SQL ile `workflow_entity.nodes` güncellemek + restart etmek
+   YETMEDİ** (eski kod çalışmaya devam etti, saatlerce yanlış teşhisle kaybedildi). **Çalışan
+   prosedür (bundan sonra hep bu sırayla yapılmalı):**
+   1. n8n durdurulur (`preview_stop`/süreç kapatılır — SQLite kilidi için).
+   2. `n8n import:workflow --input=n8n/01_incoming_whatsapp_message.json` (workflow JSON'unun
+      kökünde artık `"id": "e222f8584095459c"` var — yoksa `NOT NULL constraint failed:
+      workflow_entity.id` hatası verir). Bu komut workflow'u **deaktive eder** (yan etki).
+   3. `UPDATE workflow_entity SET active = 1 WHERE id = '...'` (tek satır SQL, CLI'ın
+      `update:workflow --active=true`'su yerine — o da denendi, "deprecated" uyarısıyla
+      birlikte `publish:workflow`'a yönlendiriyor ama webhook path'i yine de bozuk kaydediyor).
+   4. n8n başlatılır.
+   5. **Kullanıcı n8n arayüzünde (`localhost:5678`, `admin@example.com`/`TestPassw0rd!123`)
+      workflow'u açıp sağ üstteki "Publish" butonuna basmalı** — bu adım olmadan webhook
+      kaydı (`webhook_entity` tablosu) BOŞ kalıyor, `/webhook/...` 404 dönüyor. Bu, giriş
+      gerektirdiği için Claude yapamıyor (kimlik bilgisi girme kuralı) — **her workflow
+      güncellemesinden sonra kullanıcının bu tek tıklamayı yapması gerekiyor.**
+   6. **Publish sonrası webhook path'i workflow ID önekiyle kaydolabiliyor**
+      (`e222f8584095459c/webhook/incoming-whatsapp-message`, düz `incoming-whatsapp-message`
+      değil) — gerçek kayıtlı path `webhook_entity` tablosundan kontrol edilmeli, `.env`'deki
+      `N8N_INCOMING_WEBHOOK_URL` buna göre güncellenmeli (PHASE_14/26'da da görülmüş bir
+      n8n tuhaflığı, bu sürümde de devam ediyor).
+4. **Gerçek kod hatası — 3 Code node'unda mode/dizi uyuşmazlığı (düzeltildi, randevu akışını
+   personel seçiminden sonra tamamen kırıyordu):** `Prepare Availability Query (Staff Choice/
+   Reschedule)` ve `Slot Taken -> Retry Availability` node'ları `mode: runOnceForEachItem`
+   iken 7 günlük bir `items` DİZİSİ döndürüyordu — bu mod tek bir `{json:{...}}` nesnesi
+   bekler, dizi dönünce n8n `"A 'json' property isn't an object [item 0]"` hatasıyla
+   execution'ı tamamen düşürüyordu (n8n'in kendi SQLite `execution_data` tablosundan teşhis
+   edildi — `n8n_query.php` tarzı tek seferlik PHP scriptleriyle). **Düzeltme:** git'teki
+   ESKİ (daha basit, tek günlük-aralık sorgusu — `days:N` parametresiyle backend'e tek istekte
+   7 günü genişletme) versiyon geri getirildi (`mode: runOnceForAllItems` + `.first().json`);
+   CLI import ile bu versiyon yeniden yüklendi. **Bu hata muhtemelen PHASE_32'den beri (n8n
+   arayüzünden elle "günlük döngü" versiyonuna geçildiğinde, git'e hiç yansıtılmadan)
+   vardı** — yani reschedule/slot-tekrar-dene akışları bu makinede test edilene kadar hiç
+   uçtan uca çalışmamış olabilir.
+5. **Mimari hata — `N8nNotifier` kendi kendini kilitliyordu (düzeltildi, `src/Support/
+   N8nNotifier.php`):** Backend PHP built-in server **tek iş parçacıklı**. `N8nNotifier`
+   n8n'e istek atıp **yanıtını bekliyordu** (cURL blocking, timeout 3sn→15sn'e çıkarılmıştı);
+   n8n'in workflow'u bitirmesi uzun sürdüğünde (ör. müsaitlik taraması), backend o süre
+   boyunca **başka HİÇBİR isteğe cevap veremiyordu** — n8n'in AYNI workflow içinde backend'e
+   geri çağırdığı `Upsert Customer`/`Get Availability`/`Send` gibi uçlar da dahil (kendi
+   kendini kilitleyen bir sıra oluşuyordu). Gerçek ölçüm: bir adım **17 saniye** sürdü, tek
+   bir node (`Upsert Customer`) **15.1 saniye** bekledi — sebebi n8n'in kendisi değil,
+   backend'in ÖNCEKİ isteğe (N8nNotifier'ın kendi blocking çağrısına) takılı kalmasıydı.
+   **Düzeltme:** `CURLOPT_TIMEOUT_MS=400` / `CURLOPT_CONNECTTIMEOUT_MS=300` — istek gönderilir
+   gönderilmez (yanıt beklenmeden) vazgeçilir, n8n işlemeye bağımsız devam eder (dönüş değeri
+   zaten hiç kullanılmıyordu). Sonuç: adımlar arası gecikme birkaç saniyeden **<100ms'ye**
+   düştü (kalan ~1sn tamamen Meta/WhatsApp'ın kendi ağ gecikmesi, giderilemez).
+6. **Randevu akışı UX turu (kullanıcı geri bildirimiyle, `n8n/01_incoming_whatsapp_message.json`):**
+   - Randevu onay mesajı: ham `tstzrange` metni (`["2026-07-14 09:00:00+03",...)`) yerine
+     insan-okur formata çevrildi (`Randevunuz onaylandı.\n14 Temmuz 2026\nSaat: 09.00...`),
+     gereksiz "Teşekkürler" butonu (interactive) kaldırıldı → düz `type:'text'`.
+   - Slot dolu (409 exclusion constraint) durumunda artık müşteriye **açık uyarı** gösteriliyor
+     (`⚠️ *Seçtiğiniz saat başka bir müşteri tarafından alındı.* ...`) — önceden sessizce yeni
+     bir liste gönderiliyordu, kullanıcı neden değiştiğini anlamıyordu. (WhatsApp gerçek renkli
+     metin desteklemiyor — ⚠️ emoji + kalın yazı en yakın eşdeğer, kullanıcıya açıklandı.)
+   - Slot listesi satır formatı: önce `"2026-07-14 09:00"` (okunaksız) → tarih başlıklı ayrı
+     bölümler (`"14 Temmuz"` + `"Saat: 09:00"`) denendi → kullanıcı tek satırda birleşik format
+     istedi: **`"14 Temmuz, Saat: 09.00"`** (nihai, 24 karakter limitine uyuyor).
+   - Müsaitlik penceresi 7 günden **3 iş gününe** düşürüldü (`days:7`→`days:3`, üç node'da).
+   - **Çalışma günleri kalıcı olarak değiştirildi:** önceden Pazartesi kapalı, Pazar açıktı
+     (`day_of_week` 0,2,3,4,5,6) — kullanıcı isteğiyle **yalnızca Pazar kapalı**'ya çevrildi
+     (1,2,3,4,5,6). Hem canlı DB (`UPDATE working_hours/breaks SET day_of_week=1 WHERE
+     day_of_week=0`) hem `scripts/dev_seed.php` (gelecekteki re-seed'ler için) güncellendi.
+   - **AI, SSS-dışı mesajlarda artık doğrudan randevu menüsünü tetikliyor:** önceden AI her
+     serbest metne (fiyat sorusu olsun olmasın) sohbet tarzı yanıt veriyor, işlemsel niyette
+     "'randevu' yazın" diyordu — ama kullanıcı "randevu" yazınca da AI'a düşüp aynı döngüye
+     giriyordu (gerçek bir kullanılabilirlik açığı). **Düzeltme:** yeni `Is FAQ?` IF node'u
+     `/ai/respond`'un `intent` alanına bakıyor; `intent==='faq'` ise eskisi gibi AI metni
+     gönderiliyor (kullanıcı bunu — fiyat/hizmet sorularını AI'ın yanıtlamasını — özellikle
+     olumlu buldu, DOKUNULMADI); değilse yeni `AI Fallback: Prep Menu` node'u üzerinden
+     doğrudan mevcut `Get Services` zincirine (aynı node, new_session akışıyla paylaşılıyor)
+     yönlendirilip **hizmet menüsü anında gönderiliyor** — sohbete girmeden. Kendi kendine
+     hem "bugün hava nasıl" (menü geldi) hem "saç kesimi fiyatı nedir" (AI cevabı geldi) ile
+     test edilip doğrulandı.
+7. **Doğrulama:** her düzeltme kendi kendine (curl ile imzalı sahte Meta webhook payload'ları +
+   Postgres/n8n SQLite sorgularıyla) test edildi; kullanıcı da paralel olarak gerçek WhatsApp'tan
+   uçtan uca bir randevu tamamladı (14.07.2026 09:00, Mehmet Kalfa, Saç Kesimi) — sistem şu an
+   gerçek trafikte çalışıyor durumda.
+8. **Makine durumu (oturum sonunda AÇIK bırakıldı):** backend (8000), n8n (5678), Redis (6379)
+   Claude Preview üzerinden çalışıyor — bunlar bu konuşma oturumuna bağlı, **konuşma kapanınca
+   veya makine yeniden başlayınca elle yeniden başlatılmalı** (`.claude/launch.json`'daki
+   `backend`/`n8n`/`redis` configleriyle). ngrok tüneli (`provider-dislodge-bounce.ngrok-
+   free.dev`) ayrı bir terminal sürecinde — authtoken bu makineye kayıtlı (`ngrok config
+   add-authtoken` bir daha gerekmez), Avast istisnası kalıcı (bir daha eklemeye gerek yok).
+
+## Önceki Oturum (PHASE_36 — Flow publish engeli kök neden analizi + ödeme düzeltmesi + GitHub push)
 
 Hedef: WhatsApp Flows'un Meta tarafında gönderilememesi (`#139000 Blocked by Integrity`)
 sorununu derinlemesine araştırıp çözmek. Sonuç: **iki somut engel bulundu, biri tamamen

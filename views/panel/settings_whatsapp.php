@@ -136,13 +136,18 @@ function startEmbeddedSignup() {
     loadFbSdk(() => startEmbeddedSignup());
     return;
   }
+  showEsResult(null, 'Popup açıldı, bekleniyor…');
   FB.login((response) => {
     const code = response.authResponse && response.authResponse.code;
     if (!code) {
-      showEsResult(false, 'Meta yetkilendirmesi tamamlanmadı (popup kapatıldı veya reddedildi).');
+      showEsResult(false, 'Meta yetkilendirmesi tamamlanmadı (popup kapatıldı veya reddedildi). Ham yanıt: ' +
+        JSON.stringify(response));
       return;
     }
-    submitConnect(code);
+    submitConnect(code).catch((e) => {
+      console.error('submitConnect hatası:', e);
+      showEsResult(false, 'Beklenmeyen hata: ' + (e && e.message ? e.message : String(e)));
+    });
   }, {
     config_id: META_ES_CONFIG_ID,
     response_type: 'code',
@@ -168,6 +173,11 @@ function loadFbSdk(onReady) {
 }
 
 async function submitConnect(code) {
+  // WA_EMBEDDED_SIGNUP mesajı bazen FB.login callback'inden sonra gelir (postMessage
+  // async) — hemen hata vermek yerine kısa bir süre (max 3sn, 100ms aralıklarla) bekle.
+  for (let i = 0; i < 30 && (!esSession.wabaId || !esSession.phoneNumberId); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
   if (!esSession.wabaId || !esSession.phoneNumberId) {
     showEsResult(false, 'Popup\'tan WABA/numara bilgisi alınamadı. Akışı sonuna kadar tamamlayıp tekrar deneyin.');
     return;

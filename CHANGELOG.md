@@ -1223,3 +1223,38 @@ Hedef: Flow gönderiminin `#139000 Blocked by Integrity` ile engellenmesinin kö
    döndü. Teşhis aracı: `GET /{id}?fields=health_status` (entity bazlı gerçek engel listesi).
 
 **STATUS: PHASE_36_FLOW_GATE_ROOT_CAUSED_PAYMENT_FIXED**
+
+## PHASE_37 — 2026-07-13
+
+**Yeni makinede pilot test turu: 3 gerçek kod hatası + N8nNotifier mimari düzeltmesi + randevu
+UX turu.** Detaylı analiz `PROJECT_MEMORY.md` PHASE_37'de. Özet:
+
+1. **Ortam kurulumu** (yeni Windows makinesi) — ngrok kuruldu, Avast Web/Mail Shield'ın ngrok
+   bağlantısını MITM ettiği bulunup kullanıcı tarafından istisna eklendi; `.env`'deki
+   placeholder `META_APP_SECRET` gerçek değerle değiştirildi (webhook 403 sessizce
+   reddediyordu); gerçek WABA System User token'ıyla dev tenant'a yeniden bağlandı.
+2. **Kod hatası — Embedded Signup yarış durumu** (`views/panel/settings_whatsapp.php`):
+   `submitConnect` popup mesajını beklemeden anlık kontrol ediyordu → 3sn bekleme + hata
+   yollarının sessizce yutulmaması eklendi.
+3. **Kod hatası — 3 n8n Code node'unda mode/dizi uyuşmazlığı**: `Prepare Availability Query
+   (Staff Choice/Reschedule)` + `Slot Taken -> Retry Availability`, `runOnceForEachItem`
+   modunda dizi döndürüyordu → randevu akışı personel seçiminden sonra tamamen kırıktı.
+   Basit tek-istek (`days:N` parametreli) versiyona geri dönüldü.
+4. **Mimari hata — `N8nNotifier` backend'i kendi kendine kilitliyordu** (`src/Support/
+   N8nNotifier.php`): blocking cURL çağrısı tek-iş-parçacıklı PHP built-in server'ı n8n'in
+   AYNI workflow içinde geri çağırdığı uçlara kapatıyordu (bir adım 17sn sürdü). Gerçek
+   fire-and-forget'e çevrildi (`CURLOPT_TIMEOUT_MS=400`) — adımlar arası gecikme <100ms'ye düştü.
+5. **n8n 2.28.6 yeni publish/versiyon sistemi keşfedildi** — CLI import/SQL düzenlemesi tek
+   başına yetmiyor, her güncellemeden sonra kullanıcının n8n arayüzünden "Publish" tıklaması
+   gerekiyor (webhook kaydı `workflow_history`/`workflow_published_version`e bağlı).
+6. **Randevu akışı UX turu** (kullanıcı geri bildirimiyle): onay mesajı insan-okur formata
+   çevrildi (gereksiz "Teşekkürler" butonu kaldırıldı); slot-dolu durumunda açık ⚠️ uyarısı
+   eklendi; slot listesi satır formatı `"14 Temmuz, Saat: 09.00"`e sadeleştirildi; müsaitlik
+   penceresi 7→3 iş gününe indirildi; çalışma günleri Pazartesi-kapalı'dan **yalnızca
+   Pazar-kapalı**'ya kalıcı olarak değiştirildi (`scripts/dev_seed.php` + canlı DB); AI artık
+   SSS-dışı (fiyat/hizmet dışı) her mesajda sohbete girmeden doğrudan randevu menüsünü açıyor
+   (yeni `Is FAQ?` dallanması, `AI Fallback: Prep Menu` → mevcut `Get Services` zinciri).
+7. Gerçek bir müşteri (kullanıcının telefonu) uçtan uca bir randevuyu (14.07.2026 09:00, Mehmet
+   Kalfa, Saç Kesimi) başarıyla tamamladı — sistem gerçek trafikte doğrulandı.
+
+**STATUS: PHASE_37_NEW_MACHINE_PILOT_TEST_BUGFIXES_UX_TOUR**

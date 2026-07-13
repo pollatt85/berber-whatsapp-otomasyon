@@ -1,4 +1,5 @@
 {
+    "id": "e222f8584095459c",
     "name": "01 - Gelen WhatsApp Mesaji (04 SS2/SS3/SS4)",
     "nodes": [
         {
@@ -792,7 +793,7 @@
             ],
             "parameters": {
                 "mode": "runOnceForAllItems",
-                "jsCode": "const dr = $('Determine Route').first().json;\nconst ctx = dr.state_context || {};\nconst replyId = dr.reply_id;\nlet staffId;\nif (replyId === 'staff_any') { staffId = (ctx.staff_ids || [])[0]; } else { staffId = replyId.replace('staff_', ''); }\nconst serviceId = ctx.service_id;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: null } }];"
+                "jsCode": "const dr = $('Determine Route').first().json;\nconst ctx = dr.state_context || {};\nconst replyId = dr.reply_id;\nlet staffId;\nif (replyId === 'staff_any') { staffId = (ctx.staff_ids || [])[0]; } else { staffId = replyId.replace('staff_', ''); }\nconst serviceId = ctx.service_id;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 3, get_signature: dr.get_signature, reschedule_of: null } }];"
             }
         },
         {
@@ -806,7 +807,7 @@
             ],
             "parameters": {
                 "mode": "runOnceForAllItems",
-                "jsCode": "const dr = $('Determine Route').first().json;\nconst rest = dr.reply_id.replace('reschedule_', '');\nconst parts = rest.split('|');\nconst oldAppointmentId = parts[0];\nconst serviceId = parts[1];\nconst staffId = parts[2];\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: oldAppointmentId } }];"
+                "jsCode": "const dr = $('Determine Route').first().json;\nconst rest = dr.reply_id.replace('reschedule_', '');\nconst parts = rest.split('|');\nconst oldAppointmentId = parts[0];\nconst serviceId = parts[1];\nconst staffId = parts[2];\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: serviceId, staff_id: staffId, date: dateStr, days: 3, get_signature: dr.get_signature, reschedule_of: oldAppointmentId } }];"
             }
         },
         {
@@ -820,7 +821,7 @@
             ],
             "parameters": {
                 "mode": "runOnceForAllItems",
-                "jsCode": "const dr = $('Determine Route').first().json;\nconst sp = $('Sign: Post Appointment').first().json;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: sp.service_id, staff_id: sp.staff_id, date: dateStr, days: 7, get_signature: dr.get_signature, reschedule_of: sp.reschedule_of || null } }];"
+                "jsCode": "const dr = $('Determine Route').first().json;\nconst sp = $('Sign: Post Appointment').first().json;\nconst dateStr = new Date().toISOString().slice(0, 10);\nreturn [{ json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, service_id: sp.service_id, staff_id: sp.staff_id, date: dateStr, days: 3, get_signature: dr.get_signature, reschedule_of: sp.reschedule_of || null, retry_reason: 'slot_taken' } }];"
             }
         },
         {
@@ -858,7 +859,7 @@
             ],
             "parameters": {
                 "mode": "runOnceForEachItem",
-                "jsCode": "let req;\ntry { req = $('Prepare Availability Query (Staff Choice)').item.json; } catch (e) {}\nif (!req) { try { req = $('Prepare Availability Query (Reschedule)').item.json; } catch (e) {} }\nif (!req) { try { req = $('Slot Taken -> Retry Availability').item.json; } catch (e) {} }\nreturn { json: { staff_id: req.staff_id, service_id: req.service_id, tenant_id: req.tenant_id, customer_id: req.customer_id, reschedule_of: req.reschedule_of, days: $json.days || {} } };"
+                "jsCode": "let req;\ntry { req = $('Prepare Availability Query (Staff Choice)').item.json; } catch (e) {}\nif (!req) { try { req = $('Prepare Availability Query (Reschedule)').item.json; } catch (e) {} }\nif (!req) { try { req = $('Slot Taken -> Retry Availability').item.json; } catch (e) {} }\nreturn { json: { staff_id: req.staff_id, service_id: req.service_id, tenant_id: req.tenant_id, customer_id: req.customer_id, reschedule_of: req.reschedule_of, retry_reason: req.retry_reason || null, days: $json.days || {} } };"
             }
         },
         {
@@ -872,7 +873,7 @@
             ],
             "parameters": {
                 "mode": "runOnceForAllItems",
-                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst ctx = $('Attach Request Context').item.json;\nconst staffList = $json.data || [];\nconst staffMatch = staffList.find(s => s.id === ctx.staff_id);\nconst staffName = staffMatch ? staffMatch.name : ctx.staff_id;\nconst days = ctx.days || {};\nlet allSlots = [];\nfor (const date of Object.keys(days).sort()) {\n  for (const t of (days[date] || [])) {\n    allSlots.push({ staff_id: ctx.staff_id, service_id: ctx.service_id, date, time: t });\n  }\n}\nconst top = allSlots.slice(0, 9);\nconst rows = top.map((s) => ({ id: 'slot_' + s.staff_id + '|' + s.service_id + '|' + s.date + 'T' + s.time, title: (s.date + ' ' + s.time).substring(0, 24), description: ('Personel: ' + staffName).substring(0, 72) }));\nrows.push({ id: 'back_to_staff', title: '◀ Geri (Personel)' });\nconst rescheduleOf = ctx.reschedule_of || null;\nconst bodyText = top.length > 0 ? '🗓️ Sizin için uygun saatler:' : '😕 Önümüzdeki 7 günde uygun saat bulunamadı. Lütfen bizi arayın.';\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_slots_' + Date.now(), interactive: { type: 'list', body: { text: bodyText }, action: { button: 'Saat Seç', sections: [ { title: 'Uygun Saatler', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_slot_selection', context: { service_id: ctx.service_id || null, staff_id: ctx.staff_id || null, reschedule_of: rescheduleOf } };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
+                "jsCode": "const crypto = require('crypto');\nconst dr = $('Determine Route').item.json;\nconst ctx = $('Attach Request Context').item.json;\nconst staffList = $json.data || [];\nconst staffMatch = staffList.find(s => s.id === ctx.staff_id);\nconst staffName = staffMatch ? staffMatch.name : ctx.staff_id;\nconst days = ctx.days || {};\nconst TR_MONTHS = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];\nfunction formatDateTR(dateStr) {\n  const parts = dateStr.split('-').map(Number);\n  return parts[2] + ' ' + TR_MONTHS[parts[1] - 1];\n}\nlet allSlots = [];\nfor (const date of Object.keys(days).sort()) {\n  for (const t of (days[date] || [])) {\n    allSlots.push({ staff_id: ctx.staff_id, service_id: ctx.service_id, date, time: t });\n  }\n}\nconst top = allSlots.slice(0, 9);\nconst rows = top.map((s) => ({ id: 'slot_' + s.staff_id + '|' + s.service_id + '|' + s.date + 'T' + s.time, title: (formatDateTR(s.date) + ', Saat: ' + s.time.replace(':', '.')).substring(0, 24), description: ('Personel: ' + staffName).substring(0, 72) }));\nrows.push({ id: 'back_to_staff', title: '◀ Geri (Personel)' });\nconst rescheduleOf = ctx.reschedule_of || null;\nconst isRetry = ctx.retry_reason === 'slot_taken';\nlet bodyText;\nif (top.length === 0) {\n  bodyText = isRetry ? '⚠️ *Seçtiğiniz saat başka bir müşteri tarafından alındı* ve önümüzdeki günlerde başka uygun saat kalmadı. Lütfen bizi arayın.' : '😕 Önümüzdeki günlerde uygun saat bulunamadı. Lütfen bizi arayın.';\n} else {\n  bodyText = isRetry ? '⚠️ *Seçtiğiniz saat başka bir müşteri tarafından alındı.* Lütfen aşağıdan başka bir saat seçin:' : '🗓️ Sizin için uygun saatler:';\n}\nconst sendBody = { tenant_id: dr.tenant_id, type: 'interactive', customer_id: dr.customer_id, idempotency_key: dr.customer_id + '_slots_' + Date.now(), interactive: { type: 'list', body: { text: bodyText }, action: { button: 'Saat Seç', sections: [ { title: 'Uygun Saatler', rows: rows } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nconst stateBody = { tenant_id: dr.tenant_id, customer_id: dr.customer_id, step: 'awaiting_slot_selection', context: { service_id: ctx.service_id || null, staff_id: ctx.staff_id || null, reschedule_of: rescheduleOf } };\nconst stateBodyStr = JSON.stringify(stateBody);\nconst stateSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, state_body_str: stateBodyStr, state_signature: stateSignature } };"
             }
         },
         {
@@ -1229,7 +1230,7 @@
             ],
             "parameters": {
                 "mode": "runOnceForEachItem",
-                "jsCode": "const crypto = require('crypto');\nconst sc = $('Sign: Confirm Appointment').item.json;\nconst appt = $json.data;\nconst timeRange = appt.time_range || '';\nconst sendBody = { tenant_id: sc.tenant_id, type: 'interactive', customer_id: sc.customer_id, idempotency_key: sc.appointment_id + '_confirmed_notice', interactive: { type: 'button', body: { text: '✅ *Randevunuz onaylandı:* ' + timeRange + '. Sizi bekliyoruz! 💈' }, action: { buttons: [ { type: 'reply', reply: { id: 'noop_confirmed', title: 'Teşekkürler' } } ] } } };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
+                "jsCode": "const crypto = require('crypto');\nconst sc = $('Sign: Confirm Appointment').item.json;\nconst appt = $json.data;\nconst timeRange = appt.time_range || '';\nconst m = timeRange.match(/\"([^\"]+)\"/);\nlet dateStr = '';\nlet timeStr = '';\nif (m) {\n  const iso = m[1].replace(' ', 'T').replace(/([+-]\\d{2})$/, '$1:00');\n  const d = new Date(iso);\n  dateStr = d.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });\n  timeStr = d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', hour12: false }).replace(':', '.');\n}\nconst text = 'Randevunuz onaylandı.\\n' + dateStr + '\\nSaat: ' + timeStr + ' randevunuz oluşturuldu.\\nLütfen zamanında gelemeyecekseniz menüden saat değişikliği ya da randevu iptali yapmayı unutmayınız. Teşekkür ederiz.';\nconst sendBody = { tenant_id: sc.tenant_id, type: 'text', customer_id: sc.customer_id, idempotency_key: sc.appointment_id + '_confirmed_notice', text: text };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
             }
         },
         {
@@ -1456,12 +1457,47 @@
             "type": "n8n-nodes-base.code",
             "typeVersion": 2,
             "position": [
+                2760,
+                1250
+            ],
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "const crypto = require('crypto');\nconst sa = $('Sign: AI Respond').item.json;\nconst resp = $json.data || {};\nconst reply = resp.reply || 'Su an bu mesaji otomatik yanitlayamiyorum. Lutfen menuden bir secim yaparak devam edin.';\nconst sendBody = { tenant_id: sa.tenant_id, type: 'text', customer_id: sa.customer_id, idempotency_key: sa.customer_id + '_ai_' + Date.now(), text: reply };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature } };"
+            }
+        },
+        {
+            "id": "if_ai_is_faq",
+            "name": "Is FAQ?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 1,
+            "position": [
                 2520,
                 1400
             ],
             "parameters": {
+                "conditions": {
+                    "string": [
+                        {
+                            "value1": "={{$json.data.intent || ''}}",
+                            "value2": "faq",
+                            "operation": "equal"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "id": "ai_fallback_prep_menu",
+            "name": "AI Fallback: Prep Menu",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2520,
+                1550
+            ],
+            "parameters": {
                 "mode": "runOnceForEachItem",
-                "jsCode": "const crypto = require('crypto');\nconst sa = $('Sign: AI Respond').item.json;\nconst resp = $json.data || {};\nlet reply = resp.reply || 'Su an bu mesaji otomatik yanitlayamiyorum. Lutfen menuden bir secim yaparak devam edin.';\nconst intent = resp.intent || 'unclear';\n// 07 AI Module.md 2 adim 6: islemsel niyette musteriyi yapilandirilmis akisa yonlendir.\nif (intent === 'appointment_action') { reply = reply + '\\n\\nRandevu islemleri icin lutfen \\\"randevu\\\" yazarak menuyu baslatabilirsiniz.'; }\nconst sendBody = { tenant_id: sa.tenant_id, type: 'text', customer_id: sa.customer_id, idempotency_key: sa.customer_id + '_ai_' + Date.now(), text: reply };\nconst sendBodyStr = JSON.stringify(sendBody);\nconst sendSignature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendBodyStr).digest('hex');\nreturn { json: { send_body_str: sendBodyStr, send_signature: sendSignature, intent: intent } };"
+                "jsCode": "// Fiyat/hizmet dışı (SSS olmayan) her mesajda sohbete devam etmek yerine doğrudan\n// randevu menüsünü göster (kullanıcı isteği: 'çok fazla sohbete girmeden randevu sistemi devreye girsin').\nconst dr = $('Determine Route').item.json;\nreturn { json: { tenant_id: dr.tenant_id, customer_id: dr.customer_id, get_signature: dr.get_signature } };"
             }
         },
         {
@@ -2451,7 +2487,36 @@
             "main": [
                 [
                     {
+                        "node": "Is FAQ?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is FAQ?": {
+            "main": [
+                [
+                    {
                         "node": "Build AI Reply Msg",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "AI Fallback: Prep Menu",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Fallback: Prep Menu": {
+            "main": [
+                [
+                    {
+                        "node": "Get Services",
                         "type": "main",
                         "index": 0
                     }

@@ -33,13 +33,21 @@ final class N8nNotifier
 
         $signature = hash_hmac('sha256', $body, Env::required('N8N_SERVICE_SECRET'));
 
+        // Gerçek fire-and-forget: Backend PHP built-in server tek iş parçacıklıdır — bu istek
+        // n8n'in tüm workflow'u bitirmesini (birkaç saniye sürebilir, ör. müsaitlik taraması)
+        // beklerse, backend o süre boyunca BAŞKA hiçbir isteğe (n8n'in bu workflow içinde
+        // backend'e geri çağırdığı Upsert Customer/Get Availability/Send gibi uçlar dahil)
+        // cevap veremez — kendi kendini kilitler (bu oturumda gözlemlendi: bir adım
+        // gereksiz yere 15+ saniye sürdü). Çözüm: yanıtı hiç bekleme, isteği gönderip
+        // birkaç yüz milisaniye içinde vazgeç — n8n isteği alıp işlemeye devam eder,
+        // backend'in bunu bilmesine gerek yok (dönüş değeri zaten kullanılmıyor).
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', "X-Signature: {$signature}"]);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+        curl_setopt($ch, CURLOPT_TIMEOUT_MS, 400);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT_MS, 300);
 
         try {
             curl_exec($ch);
