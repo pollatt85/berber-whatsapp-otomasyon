@@ -1,6 +1,6 @@
 # Berber WhatsApp Otomasyon - boot otomatik baslatma
-# Windows oturum acilinca calisir (Task Scheduler: BerberOtomasyonAutostart).
-# Apache + Redis + n8n calismiyorsa baslatir. Postgres zaten Windows servisi (otomatik).
+# Windows oturum acilinca calisir (Baslangic klasoru launcher: BerberOtomasyonAutostart.vbs).
+# Apache + Redis + n8n + ngrok calismiyorsa baslatir. Postgres zaten Windows servisi (otomatik).
 # Her biri idempotent: zaten calisiyorsa dokunmaz -> XAMPP Control Panel ile cakismaz.
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -39,5 +39,16 @@ if (-not $n8nUp) {
     Start-Process -FilePath 'C:\nvm4w\nodejs\n8n.cmd' -ArgumentList 'start' -WindowStyle Hidden
     Log "n8n baslatildi (BACKEND_BASE_URL=8081, secret len=$($secret.Length))"
 } else { Log 'n8n zaten calisiyor' }
+
+# 4) ngrok (sabit alan adi, Meta webhook'u buna kayitli) - backend'e (:8081) tunel acar
+$ngrokUp = Get-NetTCPConnection -LocalPort 4040 -State Listen -ErrorAction SilentlyContinue
+if (-not $ngrokUp) {
+    Start-Process -FilePath 'C:\Users\User\ngrok\ngrok.exe' `
+                  -ArgumentList 'http', '--url=provider-dislodge-bounce.ngrok-free.dev', '8081', `
+                                '--log=C:\xampp\htdocs\berber-whatsapp-otomasyon\scripts\ngrok.log', `
+                                '--log-format=logfmt' `
+                  -WindowStyle Hidden
+    Log 'ngrok baslatildi (provider-dislodge-bounce.ngrok-free.dev -> :8081, --log ile headless)'
+} else { Log 'ngrok zaten calisiyor' }
 
 Log '--- autostart bitti ---'
