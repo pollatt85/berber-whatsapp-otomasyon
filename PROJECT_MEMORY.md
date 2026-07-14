@@ -7,6 +7,19 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-14 — boot otomatik başlatma + kök URL kısayolu]** Kullanıcı (kod bilmeyen) "adrese
+  girince çalışsın, bilgisayar açılınca kendiliğinden gelsin" istedi. Yapılanlar: **(1)** repo
+  köküne `index.php` eklendi → `http://localhost/berber-whatsapp-otomasyon/` artık dizin listesi
+  yerine `http://localhost:8081/panel/login`'e 302 yönlendiriyor (kalıcı Apache :8081 vhost,
+  DocumentRoot=public). Panel her yerde mutlak yol kullandığı için alt-klasörde çalışamıyor, kök
+  URL şart. **(2)** `scripts/autostart-berber.ps1` (repoda) Apache+Redis+n8n'i idempotent başlatır
+  (çalışıyorsa dokunmaz → XAMPP Control Panel ile çakışmaz). Postgres zaten Windows servisi.
+  **(3)** Yönetici yetkisi YOK → Task Scheduler/servis kurulamadı; bunun yerine Başlangıç
+  klasörüne `BerberOtomasyonAutostart.vbs` (repoda değil, kullanıcıya özel yol) kondu, oturum
+  açılınca ps1'i gizli çalıştırır. **Önemli:** n8n artık `BACKEND_BASE_URL=http://localhost:8081`
+  ile başlıyor (eski :8000 PHP built-in oturum-bağımlıydı, ölüyordu). n8n workflow'ları backend'i
+  `$env.BACKEND_BASE_URL`'den okuduğu için bu değişiklik yeterli. Gerçek reboot testi yapılamadı;
+  betik+launcher zinciri elle doğrulandı (portlar 80/8081/6379/5678 LISTEN, n8n HTTP 200).
 - Dokümantasyon fazı (00-09): ✅ tamamlandı (9/9).
 - **Kodlama fazı: ✅ PHASE_32 itibarıyla BACKLOG'daki TÜM açık maddeler kapandı** (şablon dili,
   tier uyarı alanı, Embedded Signup, n8n tek-çağrı reschedule, queue mode kararı). **PHASE_33'te
