@@ -10,8 +10,18 @@ final class Response
         public int $status,
         public array $payload = [],
         public ?string $rawBody = null,
-        public string $rawContentType = 'text/plain'
+        public string $rawContentType = 'text/plain',
+        public array $headers = []
     ) {
+    }
+
+    /**
+     * 302 yönlendirme — kök URL'yi panele düşürmek için (public/index.php `/` rotası).
+     * Görece yol verilir ki hem :8081 hem başka host altında doğru çözülsün.
+     */
+    public static function redirect(string $location, int $status = 302): self
+    {
+        return new self($status, [], '', 'text/html; charset=utf-8', ['Location' => $location]);
     }
 
     public static function json(array $payload, int $status = 200): self
@@ -47,6 +57,9 @@ final class Response
     public function send(): void
     {
         http_response_code($this->status);
+        foreach ($this->headers as $name => $value) {
+            header($name . ': ' . $value);
+        }
         if ($this->rawBody !== null) {
             header('Content-Type: ' . $this->rawContentType);
             echo $this->rawBody;

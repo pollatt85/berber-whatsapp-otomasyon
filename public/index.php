@@ -450,6 +450,11 @@ $router->patch('/appointments/{id}/reschedule', $tenantScoped(fn ($db) => functi
 // Not: 06§1'deki yollar (/login, /dashboard...) API kökleriyle (/services vb.) çakıştığı için
 // panel sayfaları /panel öneki altında yaşar.
 
+// Kök URL (/) → panele düşür. Hem doğrudan :8081/ girişini hem de port-80 Apache
+// RedirectMatch'inin ($1='/') buraya attığı isteği panele yönlendirir; giriş yoksa
+// dashboard'un istemci JS'i 401'de /panel/login'e çevirir (06§2).
+$router->get('/', fn (Request $req) => Response::redirect('/panel/dashboard'));
+
 foreach ([
     '/panel' => 'dashboard',
     '/panel/login' => 'login',
