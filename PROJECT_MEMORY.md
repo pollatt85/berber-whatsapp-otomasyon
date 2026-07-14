@@ -7,6 +7,49 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-14 — Reboot sonrası WhatsApp cevapsız: ngrok autostart kök-neden + AI SSS kaydedilmemiş]**
+  Kullanıcı PC restart attı; Apache/n8n/Redis boot'ta geldi ama WhatsApp cevap vermiyordu.
+  **(1) ngrok autostart iki ayrı sebeple ölüyordu** (`scripts/autostart-berber.ps1`, ikisi de
+  düzeltilip commit'lendi): **(a)** gizli pencerede `--log` bayrağı olmadan ngrok interaktif TUI
+  çizmeye çalışıp anında kapanıyordu → `--log=...\scripts\ngrok.log --log-format=logfmt` eklendi.
+  **(b) Asıl inatçı `ERR_NGROK_4018`:** authtoken config'i default `%LocalAppData%\ngrok\ngrok.yml`'de;
+  zamanlanmış görev/boot bağlamında `%LocalAppData%` tanımsız + `AppData\Local` yolu erişilemez
+  ("Sistem belirtilen yolu bulamıyor") → token okunamıyor → ölüyor. Not: `C:\Users\User\ngrok\`
+  (exe klasörü) AYNI bağlamda erişilebiliyordu. **Düzeltme:** config exe klasörüne kopyalandı
+  (`C:\Users\User\ngrok\ngrok.yml`) + komuta `--config=C:\Users\User\ngrok\ngrok.yml` eklendi.
+  Gerçek görev bağlamında (`schtasks /run`) test edildi: tünel up, public 200. **Kendini-onaran
+  keepalive:** `schtasks /tn BerberKeepAlive /sc minute /mo 5 /rl limited` (yönetici gerekmez) —
+  5 dk'da bir idempotent script'i çalıştırıp düşen servisi kaldırır. Teşhis notu: interaktif
+  kabukta test YANILTIR (`%LocalAppData%` doludur), mutlaka `schtasks /run` ile gerçek görev
+  bağlamında test et. **(2) AI SSS cevaplanmıyordu:** "otopark var mı" deyince menü geliyordu.
+  Kök neden: kullanıcı panelde SSS ekledi ama **"Kaydet"e basmadığı için `ai_settings` tablosu
+  BOŞtu**; satır yokken `AiSettingsRepository::find()` `enabled=false` döndürür (panel toggle
+  "etkin" gösterse de) → `fallback('disabled')` → `intent='unclear'` → n8n `Is FAQ?` FALSE → menü.
+  4 SSS + enabled kaydedildi; imzalı `/ai/respond` testi `intent=faq` + doğru park cevabı döndü.
+  **Operasyonel not:** panelde SSS/politika düzenlenince MUTLAKA "Kaydet". `.env` commit'lenmediği
+  için ngrok config yolu/authtoken bu makineye özel.
+- **[2026-07-14 — WhatsApp botu neden "bazen" cevap vermiyor: iki ayrı gerçek hata bulundu]**
+  Kullanıcı gerçek numarasından mesaj attı, bot hiç cevap vermedi ("her seferinde" tekrar eden
+  bir sorun). Kanıt zinciri: (1) `message_log` tablosunda ilgili saatte inbound satır YOK →
+  mesaj hiç işlenmemiş. (2) ngrok inspector'da (`http://127.0.0.1:4040/api/requests/http`)
+  `POST /webhook/whatsapp -> 200 OK` görünüyor → **Meta mesajı gönderdi, backend'e ulaştı,
+  backend 200 döndü** — yani sorun ngrok/Apache'de değil, backend'in n8n'e ilettiği adımda.
+  **Gerçek hata 1 (bu oturumda zaten çözülmüştü):** Avast Web Shield HTTPS taraması ngrok'un
+  kontrol bağlantısını MITM ediyordu (`x509: certificate signed by unknown authority`) →
+  kullanıcı Avast'ta HTTPS taramasını kapattı, tünel TLS hatasız kuruldu.
+  **Gerçek hata 2 (asıl "her seferinde" sebebi):** `.env`'deki `N8N_INCOMING_WEBHOOK_URL`
+  (`http://localhost:5678/webhook/e222f8584095459c/webhook/incoming-whatsapp-message`) **yanlış
+  yoldu** — n8n'in kendi veritabanında (`C:\Users\User\.n8n\database.sqlite`, `webhook_entity`
+  tablosu) kayıtlı gerçek yol sadece `incoming-whatsapp-message` idi (workflow ID öneki yok,
+  çift `/webhook/` yok). Backend Meta'ya 200 dönüyordu ama n8n'e ilettiği POST 404 alıp
+  sessizce düşüyordu — hiçbir hata kullanıcıya/loglara yansımıyordu. **Düzeltme:** `.env`
+  `N8N_INCOMING_WEBHOOK_URL=http://localhost:5678/webhook/incoming-whatsapp-message` yapıldı.
+  **Teşhis yöntemi not (gelecek oturum için):** n8n workflow'un "aktif" görünmesi webhook
+  yolunun `.env`'dekiyle eşleştiği anlamına gelmiyor — her workflow republish/versiyon
+  değişikliğinde webhook yolu değişebilir (04_n8n_Workflows.md'deki PHASE_14/26 notuyla aynı
+  desen). Şüphede kalınca `webhook_entity` tablosunu doğrudan sorgulamak en hızlı teşhis.
+  `.env` commit'lenmediği için bu düzeltme sadece bu makinede geçerli — başka bir makinede
+  aynı proje kurulursa bu adres tekrar doğrulanmalı.
 - **[2026-07-14 — boot otomatik başlatma + kök URL kısayolu]** Kullanıcı (kod bilmeyen) "adrese
   girince çalışsın, bilgisayar açılınca kendiliğinden gelsin" istedi. Yapılanlar: **(1)** repo
   köküne `index.php` eklendi → `http://localhost/berber-whatsapp-otomasyon/` artık dizin listesi
