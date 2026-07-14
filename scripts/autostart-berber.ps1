@@ -43,12 +43,16 @@ if (-not $n8nUp) {
 # 4) ngrok (sabit alan adi, Meta webhook'u buna kayitli) - backend'e (:8081) tunel acar
 $ngrokUp = Get-NetTCPConnection -LocalPort 4040 -State Listen -ErrorAction SilentlyContinue
 if (-not $ngrokUp) {
+    # --config MUTLAK yol sart. Config exe klasorunde (AppData\Local DEGIL): zamanlanmis gorev/boot
+    # baglaminda %LocalAppData% tanimsiz + AppData\Local yolu erisilemez olabiliyor -> authtoken
+    # okunamaz -> ERR_NGROK_4018 -> aninda oler. Exe klasoru (C:\Users\User\ngrok) her baglamda erisilir.
     Start-Process -FilePath 'C:\Users\User\ngrok\ngrok.exe' `
                   -ArgumentList 'http', '--url=provider-dislodge-bounce.ngrok-free.dev', '8081', `
+                                '--config=C:\Users\User\ngrok\ngrok.yml', `
                                 '--log=C:\xampp\htdocs\berber-whatsapp-otomasyon\scripts\ngrok.log', `
                                 '--log-format=logfmt' `
                   -WindowStyle Hidden
-    Log 'ngrok baslatildi (provider-dislodge-bounce.ngrok-free.dev -> :8081, --log ile headless)'
+    Log 'ngrok baslatildi (provider-dislodge-bounce.ngrok-free.dev -> :8081, --config+--log ile headless)'
 } else { Log 'ngrok zaten calisiyor' }
 
 Log '--- autostart bitti ---'
