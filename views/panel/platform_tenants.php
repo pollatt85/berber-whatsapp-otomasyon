@@ -22,7 +22,11 @@
   <div id="pageAlert"></div>
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="h4 mb-0">Tenant'lar</h1>
-    <span class="text-body-secondary small" id="tenantCount"></span>
+    <div class="d-flex align-items-center gap-3">
+      <span class="text-body-secondary small" id="tenantCount"></span>
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#newTenantModal">
+        <i class="bi bi-plus-lg me-1"></i>Yeni İşletme</button>
+    </div>
   </div>
   <div class="card">
     <div class="table-responsive">
@@ -39,6 +43,51 @@
     </div>
   </div>
 </main>
+
+<!-- A3: Yeni İşletme oluşturma formu -->
+<div class="modal fade" id="newTenantModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form class="modal-content" id="newTenantForm" onsubmit="return createTenant(event)">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-shop me-1"></i>Yeni İşletme</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="modalAlert"></div>
+        <div class="mb-3">
+          <label class="form-label">İşletme adı</label>
+          <input type="text" class="form-control" name="business_name" required maxlength="120" placeholder="Örn. Berber Ahmet">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Plan</label>
+          <select class="form-select" name="plan" required>
+            <option value="starter">Starter</option>
+            <option value="pro" selected>Pro</option>
+            <option value="business">Business</option>
+          </select>
+        </div>
+        <hr>
+        <p class="text-body-secondary small mb-2">İşletme sahibinin panel giriş bilgileri:</p>
+        <div class="mb-3">
+          <label class="form-label">Sahip e-posta</label>
+          <input type="email" class="form-control" name="owner_email" required placeholder="sahip@isletme.com">
+        </div>
+        <div class="mb-1">
+          <label class="form-label">Sahip parolası</label>
+          <input type="text" class="form-control" name="owner_password" required minlength="8" placeholder="En az 8 karakter">
+          <div class="form-text">İşletme sahibine iletilecek. En az 8 karakter.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">İptal</button>
+        <button type="submit" class="btn btn-primary" id="newTenantSubmit">
+          <i class="bi bi-check-lg me-1"></i>Oluştur</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 // Panel çekirdeğinin platform karşılığı — ayrı anahtar, ayrı login yolu, type claim kontrolü.
 const PlatformUI = {
@@ -137,6 +186,34 @@ async function loadTenants() {
       '<td class="d-none d-lg-table-cell">' + new Date(t.created_at).toLocaleDateString('tr-TR') + '</td>' +
       '<td class="text-end">' + action + '</td></tr>';
   }).join('');
+}
+
+async function createTenant(ev) {
+  ev.preventDefault();
+  const form = document.getElementById('newTenantForm');
+  const btn = document.getElementById('newTenantSubmit');
+  const modalAlert = document.getElementById('modalAlert');
+  modalAlert.innerHTML = '';
+  const data = Object.fromEntries(new FormData(form).entries());
+  btn.disabled = true;
+  try {
+    const res = await PlatformUI.api('POST', '/platform/tenants', data);
+    if (res.ok) {
+      bootstrap.Modal.getInstance(document.getElementById('newTenantModal')).hide();
+      form.reset();
+      PlatformUI.alert('"' + res.body.data.business_name + '" oluşturuldu. Sahibi ' +
+        data.owner_email + ' ile giriş yapabilir.', 'success');
+      loadTenants();
+    } else {
+      modalAlert.innerHTML = '<div class="alert alert-danger py-2">' +
+        PlatformUI.esc(res.body.message || 'İşletme oluşturulamadı.') + '</div>';
+    }
+  } catch (e) {
+    modalAlert.innerHTML = '<div class="alert alert-danger py-2">İşlem başarısız.</div>';
+  } finally {
+    btn.disabled = false;
+  }
+  return false;
 }
 
 async function setStatus(id, status) {

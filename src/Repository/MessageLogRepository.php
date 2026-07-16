@@ -27,6 +27,47 @@ final class MessageLogRepository
     }
 
     /**
+     * Y4: Meta `statuses` webhook callback'i → giden mesajın teslimat durumunu günceller.
+     * Giden mesaj kaydında wamid, Meta gönderim yanıtında saklanır
+     * (`content->response->messages[0].id`); ayrı kolona gerek yok, oradan eşleştirilir.
+     *
+     * Durum yalnızca İLERİ yönde güncellenir (sent < delivered < read) — sıra dışı gelen bir
+     * 'delivered', önceden gelmiş 'read'in üzerine yazmaz. 'failed' her zaman uygulanır.
+     * Tenant-scoped bağlantı bekler; webhook servis (BYPASSRLS) bağlantısıyla çağrılır.
+     *
+     * @return int Güncellenen satır sayısı (0 = eşleşen giden mesaj yok).
+     */
+    public function updateStatusByWamid(string $tenantId, string $wamid, string $status): int
+    {
+        // Sıra hesabı PHP'de: PDO native prepare (EMULATE_PREPARES=false) aynı :adlı parametreyi
+        // birden çok kez kullanmaya izin vermez; :status'u tek yerde tutup rank/failed'i ayrı bind et.
+        $ranks = ['sent' => 1, 'delivered' => 2, 'read' => 3];
+        $newRank = $ranks[$status] ?? 0;
+        $isFailed = $status === 'failed' ? 1 : 0;
+
+        $stmt = $this->db->prepare(
+            "UPDATE message_log
+             SET status = :status
+             WHERE tenant_id = :tenant_id
+               AND direction = 'outbound'
+               AND content->'response'->'messages'->0->>'id' = :wamid
+               AND (
+                   :is_failed = 1
+                   OR COALESCE(array_position(ARRAY['sent','delivered','read'], status), 0) < :new_rank
+               )"
+        );
+        $stmt->execute([
+            'status' => $status,
+            'tenant_id' => $tenantId,
+            'wamid' => $wamid,
+            'is_failed' => $isFailed,
+            'new_rank' => $newRank,
+        ]);
+
+        return $stmt->rowCount();
+    }
+
+    /**
      * 24 saatlik konuşma penceresi kontrolü (05_WhatsApp_Integration.md §4).
      */
     public function lastInboundAt(string $tenantId, string $customerId): ?string

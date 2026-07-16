@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Repository;
 
+use App\Config\Env;
+use App\Support\TokenCipher;
 use PDO;
 
 /**
@@ -14,6 +16,69 @@ final class TenantRepository
 {
     public function __construct(private PDO $service)
     {
+    }
+
+    /**
+     * A3: Platform admin panelinden yeni işletme aç. WhatsApp henüz bağlı değil — Embedded Signup
+     * öncesi zorunlu alanlar placeholder ile doldurulur (`dev_seed.php` ile aynı kanıtlı desen):
+     * phone_number_id/waba_id benzersiz 'pending-...' (UNIQUE kısıtı bozulmaz), access_token_encrypted
+     * şifreli placeholder (bytea NOT NULL), whatsapp_status='pending'. `connectWhatsApp()` sonradan
+     * bunların üzerine gerçek değerleri yazar. Çağıran taraf transaction ve plan doğrulamasını yönetir.
+     */
+    public function create(string $businessName, string $planName): array
+    {
+        $stmt = $this->service->prepare(
+            "INSERT INTO tenants (business_name, phone_number_id, waba_id, access_token_encrypted,
+                                  webhook_verify_token, whatsapp_status, plan_id)
+             VALUES (:name, :pnid, :waba, :token, :verify, 'pending',
+                     (SELECT id FROM plans WHERE name = :plan))
+             RETURNING id, business_name, status, subscription_status, plan_id, whatsapp_status, created_at"
+        );
+        $stmt->bindValue('name', $businessName);
+        $stmt->bindValue('pnid', 'pending-' . bin2hex(random_bytes(8)));
+        $stmt->bindValue('waba', 'pending-' . bin2hex(random_bytes(8)));
+        $stmt->bindValue('token', TokenCipher::encrypt('pending-placeholder', Env::required('APP_ENCRYPTION_KEY')), PDO::PARAM_LOB);
+        $stmt->bindValue('verify', bin2hex(random_bytes(16)));
+        $stmt->bindValue('plan', $planName);
+        $stmt->execute();
+
+        return $stmt->fetch();
+    }
+
+    /**
+     * A3: Verilen ad'a sahip plan var mı? create() öncesi doğrulama — plan_id NOT NULL, olmayan
+     * plan subquery'de NULL döner ve INSERT'i patlatır; önce burada 422 üretmek daha temiz.
+     */
+    public function planExists(string $planName): bool
+    {
+        $stmt = $this->service->prepare('SELECT 1 FROM plans WHERE name = :plan');
+        $stmt->execute(['plan' => $planName]);
+
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /**
+     * O4: Tenant'ın plan limitleri (`plans` kataloğu, tenant.plan_id üzerinden). Hiçbir yerde
+     * okunmuyordu; StaffController (max_staff), CampaignController (campaigns_enabled),
+     * AiSettingsController (ai_enabled) bu limitleri uygular. max_staff NULL = sınırsız.
+     *
+     * @return array{max_staff:?int, ai_enabled:bool, campaigns_enabled:bool}
+     */
+    public function planLimits(string $tenantId): array
+    {
+        $stmt = $this->service->prepare(
+            'SELECT p.max_staff, p.ai_enabled, p.campaigns_enabled
+             FROM tenants t JOIN plans p ON p.id = t.plan_id
+             WHERE t.id = :id'
+        );
+        $stmt->execute(['id' => $tenantId]);
+        $row = $stmt->fetch();
+
+        return [
+            'max_staff' => $row && $row['max_staff'] !== null ? (int) $row['max_staff'] : null,
+            'ai_enabled' => (bool) ($row['ai_enabled'] ?? false),
+            'campaigns_enabled' => (bool) ($row['campaigns_enabled'] ?? false),
+        ];
     }
 
     public function findByPhoneNumberId(string $phoneNumberId): ?array

@@ -58,6 +58,12 @@ final class AppointmentController
         if ($staffId === '' || $serviceId === '' || $startTime === '') {
             throw new ApiException('validation_error', 'staff_id, service_id, start_time are required.', 422);
         }
+        // O1: start_time açık bir saat dilimi offset'i (+03:00 / Z) taşımalı. Offset yoksa
+        // DateTimeImmutable PHP'nin date.timezone'unu (deploy'da Europe/Berlin olabilir) kullanır
+        // ve saat sessizce 1 saat kayar. n8n her zaman '+03:00' ekliyor; yine de burada zorunlu tut.
+        if (!preg_match('/(Z|[+\-]\d{2}:?\d{2})$/', $startTime)) {
+            throw new ApiException('validation_error', 'start_time bir saat dilimi offset\'i içermeli (ör. 2026-07-20T14:30:00+03:00).', 422);
+        }
         if ($customerId === null && $whatsappNumber === null) {
             throw new ApiException('validation_error', 'customer_id or whatsapp_number is required.', 422);
         }
@@ -159,10 +165,14 @@ final class AppointmentController
     }
 
     /**
-     * İşletme pending bir randevunun saatini uygun bulmayınca panelden tetiklenir (PHASE_35):
-     * randevu durumu değişmez (hâlâ pending), müşteriye aynı personel+hizmetle önceden
-     * doldurulmuş (bkz. `WhatsAppNotifier::sendFlowTrigger` notu) WhatsApp Flows randevu formu
-     * yeniden gönderilir. Form tamamlanınca n8n'in yeni `flow_submitted` route'u devreye girer.
+     * İşletme pending bir randevunun saatini uygun bulmayınca panelden tetiklenir: randevu durumu
+     * değişmez (hâlâ pending), müşteriye aynı personel+hizmet için interaktif saat listesi gönderilir.
+     *
+     * O6: Eskiden `sendFlowTrigger` çağrılıyordu; META_FLOW_ID yapılandırılmamışsa (dev/pilot durumu)
+     * sessizce hiçbir şey yapmıyor, panel ise 200 dönüp "gönderildi" yanılsaması veriyordu. Flow zaten
+     * business verification olmadan kullanılamıyor. `sendSlotPicker` tam bu senaryo için tasarlandı
+     * (docblock'una bakın), Flow gerektirmez ve conversation_states'i n8n'in mevcut `slot_chosen` →
+     * reschedule akışıyla birebir uyumlu `reschedule_of` sözleşmesiyle kurar.
      */
     public function requestReschedule(Request $request, string $tenantId, string $id): Response
     {
@@ -171,16 +181,13 @@ final class AppointmentController
             throw new ApiException('validation_error', 'Appointment not found or not pending.', 422);
         }
 
-        $this->notifier?->sendFlowTrigger(
+        $this->notifier?->sendSlotPicker(
             $tenantId,
             $appointment['customer_id'],
             $appointment['id'],
-            "😔 Seçtiğiniz saat şu anda uygun değil. Aşağıdan yeni bir randevu saati seçebilir misiniz?",
-            [
-                'service_id' => $appointment['service_id'],
-                'staff_id' => $appointment['staff_id'],
-                'reschedule_of' => $appointment['id'],
-            ]
+            $appointment['staff_id'],
+            $appointment['service_id'],
+            "😔 Seçtiğiniz saat şu anda uygun değil. Aşağıdan yeni bir randevu saati seçebilir misiniz?"
         );
 
         return Response::json(['data' => $appointment]);
@@ -195,6 +202,10 @@ final class AppointmentController
         $startTime = (string) $request->input('start_time', '');
         if ($startTime === '') {
             throw new ApiException('validation_error', 'start_time is required.', 422);
+        }
+        // O1: offset zorunlu (bkz. store) — offsetsiz start_time sessizce 1 saat kayabilir.
+        if (!preg_match('/(Z|[+\-]\d{2}:?\d{2})$/', $startTime)) {
+            throw new ApiException('validation_error', 'start_time bir saat dilimi offset\'i içermeli (ör. 2026-07-20T14:30:00+03:00).', 422);
         }
 
         $existing = $this->appointments->find($tenantId, $id);

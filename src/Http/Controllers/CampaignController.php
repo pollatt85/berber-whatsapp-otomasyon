@@ -9,6 +9,7 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Repository\CampaignRepository;
 use App\Repository\MessageTemplateRepository;
+use App\Repository\TenantRepository;
 
 /**
  * `/campaigns` CRUD (06_Admin_Panel.md §7): hedef filtre (`target_filter` jsonb, ör. "son
@@ -21,7 +22,8 @@ final class CampaignController
 {
     public function __construct(
         private CampaignRepository $campaigns,
-        private MessageTemplateRepository $templates
+        private MessageTemplateRepository $templates,
+        private ?TenantRepository $tenants = null
     ) {
     }
 
@@ -33,6 +35,10 @@ final class CampaignController
     public function store(Request $request, string $tenantId, array $args, string $role): Response
     {
         $this->requireManager($role);
+        // O4: Kampanya özelliği plana bağlı (campaigns_enabled). Kapalı planda oluşturma engellenir.
+        if ($this->tenants !== null && !$this->tenants->planLimits($tenantId)['campaigns_enabled']) {
+            throw new ApiException('plan_limit', 'Kampanya özelliği planınıza dahil değil.', 403);
+        }
         [$name, $templateId, $targetFilter, $scheduledAt] = $this->validatePayload($request, $tenantId);
 
         $campaign = $this->campaigns->create(

@@ -28,13 +28,19 @@ final class AppointmentScanRepository
     {
         return $this->withAdvisoryLock(self::REMINDER_LOCK_KEY, function (): array {
             $stmt = $this->service->query(
-                "SELECT a.*, c.whatsapp_number, c.name AS customer_name
+                "SELECT a.*, c.whatsapp_number, c.name AS customer_name,
+                        to_char(lower(a.time_range) AT TIME ZONE t.timezone, 'HH24:MI') AS start_time_local,
+                        to_char(lower(a.time_range) AT TIME ZONE t.timezone, 'DD.MM.YYYY') AS start_date_local
                  FROM appointments a
                  JOIN tenants t ON t.id = a.tenant_id
                  JOIN customers c ON c.id = a.customer_id
                  WHERE a.status = 'confirmed'
-                   AND (lower(a.time_range) - (t.reminder_hours_before || ' hours')::interval)
-                       BETWEEN now() - interval '15 minutes' AND now()
+                   -- O2: Alt sınırlı 15 dk penceresi yerine 'hatırlatma vakti geçti ama randevu hâlâ
+                   -- gelecekte' koşulu. n8n bir tur kaçırsa bile hatırlatma sonraki turda gider
+                   -- (bir daha asla atlanmaz); dedupe (_reminder) tek gönderimi, gelecek-koşulu ise
+                   -- geçmiş randevulara hatırlatma gitmemesini garanti eder.
+                   AND (lower(a.time_range) - (t.reminder_hours_before || ' hours')::interval) <= now()
+                   AND lower(a.time_range) > now()
                    AND NOT EXISTS (
                        SELECT 1 FROM message_log ml
                        WHERE ml.tenant_id = a.tenant_id AND ml.idempotency_key = a.id::text || '_reminder'

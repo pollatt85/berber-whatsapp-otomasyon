@@ -51,10 +51,35 @@ final class WhatsAppNotifier
                 'text' => ['body' => $text],
             ];
 
+            // Y6: 24 saatlik konuşma penceresi kontrolü (WhatsAppInternalController::send ile aynı mantık).
+            // Kapalıysa serbest metin gönderimi Meta'da 131047 ile düşer; boşuna çağrı yapmak yerine
+            // nedeni message_log'a 'failed' olarak yazıp çık — panel "gönderildi" yanılsaması vermesin.
+            $lastInbound = $this->messageLogs->lastInboundAt($tenantId, $customerId);
+            if ($lastInbound === null || (time() - strtotime($lastInbound)) > 24 * 3600) {
+                $this->messageLogs->insert(
+                    $tenantId,
+                    $customerId,
+                    $appointmentId,
+                    'outbound',
+                    null,
+                    ['request' => $payload, 'response' => ['error' => ['code' => 131047, 'message' => 'preflight: 24h window closed']]],
+                    'failed',
+                    '131047',
+                    null
+                );
+                return;
+            }
+
             $accessToken = TokenCipher::decrypt(hex2bin($tenant['access_token_hex']), Env::required('APP_ENCRYPTION_KEY'));
             $result = $this->meta->sendMessage($tenant['phone_number_id'], $accessToken, $payload);
             $success = $result['status'] >= 200 && $result['status'] < 300 && !isset($result['body']['error']);
             $metaErrorCode = $success ? null : (string) ($result['body']['error']['code'] ?? 'unknown');
+
+            // Y3: token geçersiz (190) → tenant'ı disconnected işaretle; aksi halde whatsapp_status
+            // yeşil kalır ve tüm panel aksiyonları sessizce düşer.
+            if (!$success && $metaErrorCode === '190') {
+                $this->tenants->markDisconnected($tenantId);
+            }
 
             $this->messageLogs->insert(
                 $tenantId,
@@ -68,7 +93,8 @@ final class WhatsAppNotifier
                 null
             );
         } catch (Throwable $e) {
-            // best-effort: panel aksiyonu WhatsApp gönderimi başarısız olsa da tamamlanmalı
+            // Y1: sessiz yutma yok — teşhis için logla (panel aksiyonu yine tamamlanır).
+            error_log('WhatsAppNotifier::notifyAppointment: ' . $e->getMessage());
         }
     }
 
@@ -147,6 +173,11 @@ final class WhatsAppNotifier
             $success = $result['status'] >= 200 && $result['status'] < 300 && !isset($result['body']['error']);
             $metaErrorCode = $success ? null : (string) ($result['body']['error']['code'] ?? 'unknown');
 
+            // Y3: token geçersiz (190) → tenant'ı disconnected işaretle.
+            if (!$success && $metaErrorCode === '190') {
+                $this->tenants->markDisconnected($tenantId);
+            }
+
             $this->messageLogs->insert(
                 $tenantId,
                 $customerId,
@@ -167,7 +198,8 @@ final class WhatsAppNotifier
                 ]);
             }
         } catch (Throwable $e) {
-            // best-effort: panel aksiyonu WhatsApp gönderimi başarısız olsa da tamamlanmalı
+            // Y1: sessiz yutma yok — teşhis için logla.
+            error_log('WhatsAppNotifier::sendSlotPicker: ' . $e->getMessage());
         }
     }
 
@@ -236,6 +268,11 @@ final class WhatsAppNotifier
             $success = $result['status'] >= 200 && $result['status'] < 300 && !isset($result['body']['error']);
             $metaErrorCode = $success ? null : (string) ($result['body']['error']['code'] ?? 'unknown');
 
+            // Y3: token geçersiz (190) → tenant'ı disconnected işaretle.
+            if (!$success && $metaErrorCode === '190') {
+                $this->tenants->markDisconnected($tenantId);
+            }
+
             $this->messageLogs->insert(
                 $tenantId,
                 $customerId,
@@ -248,7 +285,8 @@ final class WhatsAppNotifier
                 null
             );
         } catch (Throwable $e) {
-            // best-effort
+            // Y1: sessiz yutma yok — teşhis için logla.
+            error_log('WhatsAppNotifier::sendFlowTrigger: ' . $e->getMessage());
         }
     }
 }

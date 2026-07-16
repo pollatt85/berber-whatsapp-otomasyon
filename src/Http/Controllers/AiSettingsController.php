@@ -8,6 +8,7 @@ use App\Http\ApiException;
 use App\Http\Request;
 use App\Http\Response;
 use App\Repository\AiSettingsRepository;
+use App\Repository\TenantRepository;
 
 /**
  * `GET/PATCH /settings/ai` (06_Admin_Panel.md §8, 07_AI_Module.md §6). Panel alanları:
@@ -21,7 +22,7 @@ final class AiSettingsController
 {
     private const TONES = ['friendly', 'formal', 'concise'];
 
-    public function __construct(private AiSettingsRepository $settings)
+    public function __construct(private AiSettingsRepository $settings, private ?TenantRepository $tenants = null)
     {
     }
 
@@ -73,6 +74,11 @@ final class AiSettingsController
 
         if ($errors !== []) {
             throw new ApiException('validation_error', 'Geçersiz AI ayarı.', 422, $errors);
+        }
+
+        // O4: AI özelliği plana bağlı (ai_enabled). Plan izin vermiyorsa AI açılamaz (kapatma serbest).
+        if ($enabled === true && $this->tenants !== null && !$this->tenants->planLimits($tenantId)['ai_enabled']) {
+            throw new ApiException('plan_limit', 'AI özelliği planınıza dahil değil.', 403);
         }
 
         return Response::json(['data' => $this->settings->upsert($tenantId, $enabled, $tone, $knowledgeBase)]);

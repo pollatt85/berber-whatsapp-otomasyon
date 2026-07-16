@@ -8,13 +8,14 @@ use App\Http\ApiException;
 use App\Http\Request;
 use App\Http\Response;
 use App\Repository\StaffRepository;
+use App\Repository\TenantRepository;
 
 /**
  * `/staff` CRUD (03_Backend_API.md §3.2).
  */
 final class StaffController
 {
-    public function __construct(private StaffRepository $staff)
+    public function __construct(private StaffRepository $staff, private ?TenantRepository $tenants = null)
     {
     }
 
@@ -33,6 +34,14 @@ final class StaffController
         $name = trim((string) $request->input('name', ''));
         if ($name === '') {
             throw new ApiException('validation_error', 'name is required.', 422);
+        }
+
+        // O4: Plan personel limiti (max_staff NULL = sınırsız). Aktif personel sayısı limite ulaştıysa 403.
+        if ($this->tenants !== null) {
+            $maxStaff = $this->tenants->planLimits($tenantId)['max_staff'];
+            if ($maxStaff !== null && count($this->staff->all($tenantId, true)) >= $maxStaff) {
+                throw new ApiException('plan_limit', "Planınızın personel limitine ({$maxStaff}) ulaştınız.", 403);
+            }
         }
 
         $phone = $request->input('phone');

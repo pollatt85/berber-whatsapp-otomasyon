@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+// O1: Uygulama saat dilimini açıkça sabitle. XAMPP php.ini'si Europe/Berlin olabilir; DB ve tüm
+// tenant verisi Europe/Istanbul. Sistem php.ini'sini değiştirmek diğer projeleri etkilerdi —
+// burada scope'lu ve versiyonlanmış olarak ayarlanır. Offsetsiz datetime'lar artık Istanbul varsayar.
+date_default_timezone_set('Europe/Istanbul');
+
 $autoload = dirname(__DIR__) . '/vendor/autoload.php';
 if (is_file($autoload)) {
     require $autoload;
@@ -122,7 +127,11 @@ $router->get('/webhook/whatsapp', function (Request $req) {
 
 $router->post('/webhook/whatsapp', function (Request $req) {
     $db = Connection::service();
-    $controller = new WhatsAppWebhookController(new WebhookEventRepository($db), new TenantRepository($db));
+    $controller = new WhatsAppWebhookController(
+        new WebhookEventRepository($db),
+        new TenantRepository($db),
+        new MessageLogRepository($db)
+    );
     return $controller->receive($req);
 });
 
@@ -150,6 +159,19 @@ $router->get('/platform/tenants', function (Request $req) {
     PlatformAdminAuthMiddleware::authenticate($req);
     $controller = new PlatformTenantController(new TenantRepository(Connection::service()));
     return $controller->index($req);
+});
+
+$router->post('/platform/tenants', function (Request $req) {
+    PlatformAdminAuthMiddleware::authenticate($req);
+    // store() atomik: üç repo da AYNI service PDO ile kurulmalı (transaction tek bağlantıda).
+    $pdo = Connection::service();
+    $controller = new PlatformTenantController(
+        new TenantRepository($pdo),
+        new UserRepository($pdo),
+        new AiSettingsRepository($pdo),
+        $pdo
+    );
+    return $controller->store($req);
 });
 
 $router->patch('/platform/tenants/{id}', function (Request $req, array $args) {
@@ -281,7 +303,8 @@ $router->get('/staff', $tenantScoped(fn ($db) => function (Request $r, string $t
     return (new StaffController(new StaffRepository($db)))->index($r, $tid);
 }));
 $router->post('/staff', $tenantScoped(fn ($db) => function (Request $r, string $tid) use ($db) {
-    return (new StaffController(new StaffRepository($db)))->store($r, $tid);
+    // O4: plan max_staff kontrolü için servis (BYPASSRLS) TenantRepository enjekte edilir.
+    return (new StaffController(new StaffRepository($db), new TenantRepository(Connection::service())))->store($r, $tid);
 }));
 $router->put('/staff/{id}', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a) use ($db) {
     return (new StaffController(new StaffRepository($db)))->update($r, $tid, $a['id']);
@@ -317,7 +340,7 @@ $router->get('/messages/templates', $tenantScoped(fn ($db) => function (Request 
 }));
 
 // Kampanyalar (06§7) — CRUD; gönderim bu fazda yok, durum makinesi draft/scheduled/cancelled.
-$campaignController = fn ($db) => new CampaignController(new CampaignRepository($db), new MessageTemplateRepository($db));
+$campaignController = fn ($db) => new CampaignController(new CampaignRepository($db), new MessageTemplateRepository($db), new TenantRepository(Connection::service()));
 
 $router->get('/campaigns', $tenantScoped(fn ($db) => function (Request $r, string $tid) use ($db, $campaignController) {
     return $campaignController($db)->index($r, $tid);
@@ -378,7 +401,8 @@ $router->get('/settings/ai', $tenantScoped(fn ($db) => function (Request $r, str
     return (new AiSettingsController(new AiSettingsRepository($db)))->show($r, $tid);
 }));
 $router->patch('/settings/ai', $tenantScoped(fn ($db) => function (Request $r, string $tid, array $a, string $role) use ($db) {
-    return (new AiSettingsController(new AiSettingsRepository($db)))->update($r, $tid, $a, $role);
+    // O4: plan ai_enabled kontrolü için servis TenantRepository enjekte edilir.
+    return (new AiSettingsController(new AiSettingsRepository($db), new TenantRepository(Connection::service())))->update($r, $tid, $a, $role);
 }));
 $router->get('/settings', $tenantScoped(fn ($db) => function (Request $r, string $tid) use ($db) {
     return (new SettingsController(new TenantSettingsRepository($db)))->show($r, $tid);

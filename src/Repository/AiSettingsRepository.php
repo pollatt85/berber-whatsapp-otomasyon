@@ -38,6 +38,19 @@ final class AiSettingsRepository
         return $row ?: self::DEFAULTS;
     }
 
+    /**
+     * A3: Yeni tenant için varsayılan ai_settings satırı (enabled=false, tone='friendly',
+     * knowledge_base='{}'). Tüm kolon varsayılanları DB'den gelir — böylece knowledge_base
+     * doğru boş NESNE ('{}') olur (upsert'e [] geçmek '[]' yazardı). İdempotent.
+     */
+    public function createDefault(string $tenantId): void
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO ai_settings (tenant_id) VALUES (:tenant_id) ON CONFLICT (tenant_id) DO NOTHING'
+        );
+        $stmt->execute(['tenant_id' => $tenantId]);
+    }
+
     public function upsert(string $tenantId, bool $enabled, string $tone, array $knowledgeBase): array
     {
         $stmt = $this->db->prepare(

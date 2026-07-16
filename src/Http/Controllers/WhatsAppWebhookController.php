@@ -8,6 +8,7 @@ use App\Config\Env;
 use App\Http\ApiException;
 use App\Http\Request;
 use App\Http\Response;
+use App\Repository\MessageLogRepository;
 use App\Repository\TenantRepository;
 use App\Repository\WebhookEventRepository;
 use App\Support\N8nNotifier;
@@ -23,6 +24,7 @@ final class WhatsAppWebhookController
     public function __construct(
         private WebhookEventRepository $events,
         private TenantRepository $tenants,
+        private ?MessageLogRepository $messageLogs = null,
         private ?N8nNotifier $notifier = null
     ) {
         $this->notifier ??= new N8nNotifier();
@@ -66,7 +68,24 @@ final class WhatsAppWebhookController
         $this->events->insert($tenant['id'] ?? null, $phoneNumberId !== '' ? $phoneNumberId : 'unknown', true, $payload);
 
         if ($tenant !== null) {
-            $this->notifier->notifyIncomingMessage($tenant['id'], $phoneNumberId, $payload);
+            $value = $payload['entry'][0]['changes'][0]['value'] ?? [];
+
+            // Y4: Meta teslimat durumu callback'i (statuses[]) — message_log.status'u güncelle.
+            // Bir webhook ya `messages` ya da `statuses` taşır; statuses varsa n8n'e iletmeye gerek yok.
+            if (!empty($value['statuses']) && $this->messageLogs !== null) {
+                foreach ($value['statuses'] as $status) {
+                    $wamid = (string) ($status['id'] ?? '');
+                    $newStatus = (string) ($status['status'] ?? '');
+                    if ($wamid !== '' && in_array($newStatus, ['sent', 'delivered', 'read', 'failed'], true)) {
+                        $this->messageLogs->updateStatusByWamid($tenant['id'], $wamid, $newStatus);
+                    }
+                }
+            }
+
+            // Gelen kullanıcı mesajı → orkestrasyon için n8n'e ilet.
+            if (!empty($value['messages'])) {
+                $this->notifier->notifyIncomingMessage($tenant['id'], $phoneNumberId, $payload);
+            }
         }
 
         return Response::json(['status' => 'ok']);

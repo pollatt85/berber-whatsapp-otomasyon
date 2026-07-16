@@ -29,9 +29,30 @@ final class AuthController
             throw new ApiException('validation_error', 'email and password are required.', 422);
         }
 
-        $user = $this->users->findActiveByEmail($email);
-        if ($user === null || !password_verify($password, $user['password_hash'])) {
+        // Y5: e-posta tenant başına benzersiz (global değil). Tüm eşleşen aktif kullanıcılardan
+        // yalnızca PAROLASI tutanları süz; tam bir tane tutmalı. Böylece yanlış tenant'a sessiz
+        // giriş imkânsız: 0 tutan → 401, >1 tutan → 409 (belirsiz), 1 tutan → giriş.
+        $matched = array_values(array_filter(
+            $this->users->findActiveByEmail($email),
+            static fn (array $u): bool => password_verify($password, $u['password_hash'])
+        ));
+
+        if ($matched === []) {
             throw new ApiException('unauthorized', 'Invalid credentials.', 401);
+        }
+        if (count($matched) > 1) {
+            throw new ApiException(
+                'account_ambiguous',
+                'Bu e-posta birden fazla işletmede aynı parolayla kayıtlı; yönetici ile iletişime geçin.',
+                409
+            );
+        }
+
+        $user = $matched[0];
+
+        // O3: askıya alınmış / iptal edilmiş tenant giriş yapamaz (panel "Askıya Al" butonu etkili olsun).
+        if ($user['tenant_status'] !== 'active') {
+            throw new ApiException('tenant_inactive', 'İşletme hesabı aktif değil.', 403);
         }
 
         $ttl = (int) Env::get('JWT_TTL_SECONDS', '7200');

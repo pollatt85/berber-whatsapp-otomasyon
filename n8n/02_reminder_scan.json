@@ -64,7 +64,7 @@
       "position": [600, 0],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst appt = $json;\nconst bodyObj = {\n  tenant_id: appt.tenant_id,\n  type: 'template',\n  customer_id: appt.customer_id,\n  template_internal_name: 'appointment_reminder',\n  variables: [appt.customer_name || '', appt.time_range || ''],\n  idempotency_key: appt.id + '_reminder',\n};\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature } };"
+        "jsCode": "const crypto = require('crypto');\nconst appt = $json;\n// template_internal_name DB'deki gercek ad olmali ('reminder_24h' -> meta 'randevu_hatirlatma_24s');\n// eski 'appointment_reminder' hicbir tenant'ta yok -> findByInternalName null -> 422, hatirlatma hic gitmiyordu.\n// variables sirasi seed'deki ['musteri_adi','saat'] ile birebir: [customer_name, start_time_local].\n// start_time_local backend'de tenant timezone'unda formatlanir (AppointmentScanRepository);\n// ham time_range gonderilirse musteriye PostgreSQL range metni gidiyordu.\nconst bodyObj = {\n  tenant_id: appt.tenant_id,\n  type: 'template',\n  customer_id: appt.customer_id,\n  template_internal_name: 'reminder_24h',\n  variables: [appt.customer_name || '', appt.start_time_local || ''],\n  idempotency_key: appt.id + '_reminder',\n};\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature } };"
       }
     },
     {
