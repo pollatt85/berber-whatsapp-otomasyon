@@ -41,13 +41,18 @@ final class AvailabilityController
         // panel + 03_Backend_API.md §3.3 sözleşmesi) hem `days` (tarih→slot haritası, tek gün
         // istense bile) döner. Böylece hiçbir tüketici (panel `.slots`, n8n `.days`) eksik anahtar
         // görmez — tek yönlü şekil değişimi kaynaklı "boş liste" tuzağı ortadan kalkar.
+        // Faz D: slot adımı tenant başına (slot_step_minutes, migration 0006). Kolon henüz yoksa
+        // (?? ) DEFAULT_STEP_MINUTES=30 kullanılır — migration öncesi/sonrası güvenli.
+        $stepMinutes = (int) ($tenant['slot_step_minutes'] ?? AvailabilityService::DEFAULT_STEP_MINUTES);
+
         $daysMap = $this->availability->slotsForRange(
             $tenantId,
             (string) $staffId,
             (string) $serviceId,
             (string) $date,
             max(1, $days),
-            (string) $tenant['timezone']
+            (string) $tenant['timezone'],
+            $stepMinutes
         );
 
         return Response::json([

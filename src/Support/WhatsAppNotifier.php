@@ -21,6 +21,10 @@ use Throwable;
  */
 final class WhatsAppNotifier
 {
+    /** Faz D: bir sayfada gösterilen slot sayısı; 10 satırlık WhatsApp liste sınırında 9. satır
+     *  "Daha fazla saat" için ayrılır. n8n workflow 01 ile aynı değer olmalı. */
+    private const SLOT_PAGE_SIZE = 8;
+
     public function __construct(
         private TenantRepository $tenants,
         private CustomerRepository $customers,
@@ -131,21 +135,30 @@ final class WhatsAppNotifier
 
             $tenantRow = $this->tenants->findById($tenantId);
             $timezone = (string) ($tenantRow['timezone'] ?? 'Europe/Istanbul');
+            $stepMinutes = (int) ($tenantRow['slot_step_minutes'] ?? AvailabilityService::DEFAULT_STEP_MINUTES);
             $today = (new DateTimeImmutable('now', new DateTimeZone($timezone)))->format('Y-m-d');
-            $days = $this->availability->slotsForRange($tenantId, $staffId, $serviceId, $today, 7, $timezone);
+            $days = $this->availability->slotsForRange($tenantId, $staffId, $serviceId, $today, 7, $timezone, $stepMinutes);
 
-            $rows = [];
+            // Faz D: tüm slotları düz listeye aç, ilk sayfayı (offset 0) göster; devamı varsa 10. satıra
+            // "Daha fazla saat ▶" ekle. Müşteri buna basınca yanıt n8n'e (workflow 01 more_slots) gider
+            // ve sonraki sayfa oradan yönetilir — panel yalnızca ilk sayfayı başlatır.
+            $flat = [];
             foreach ($days as $date => $times) {
                 foreach ($times as $time) {
-                    $rows[] = [
-                        'id' => "slot_{$staffId}|{$serviceId}|{$date}T{$time}",
-                        'title' => substr("{$date} {$time}", 0, 24),
-                        'description' => "Personel: {$staffId}",
-                    ];
-                    if (count($rows) >= 9) {
-                        break 2;
-                    }
+                    $flat[] = ['date' => $date, 'time' => $time];
                 }
+            }
+
+            $rows = [];
+            foreach (array_slice($flat, 0, self::SLOT_PAGE_SIZE) as $slot) {
+                $rows[] = [
+                    'id' => "slot_{$staffId}|{$serviceId}|{$slot['date']}T{$slot['time']}",
+                    'title' => substr("{$slot['date']} {$slot['time']}", 0, 24),
+                    'description' => "Personel: {$staffId}",
+                ];
+            }
+            if (count($flat) > self::SLOT_PAGE_SIZE) {
+                $rows[] = ['id' => 'more_slots', 'title' => 'Daha fazla saat ▶'];
             }
 
             if ($rows === []) {
@@ -191,10 +204,12 @@ final class WhatsAppNotifier
             );
 
             if ($success && $rows !== []) {
+                // Faz D: slot_offset state'e yazılır; n8n more_slots akışı bunu okuyup ilerletir.
                 $this->conversationStates->upsert($tenantId, $customerId, 'awaiting_slot_selection', [
                     'service_id' => $serviceId,
                     'staff_id' => $staffId,
                     'reschedule_of' => $appointmentId,
+                    'slot_offset' => 0,
                 ]);
             }
         } catch (Throwable $e) {

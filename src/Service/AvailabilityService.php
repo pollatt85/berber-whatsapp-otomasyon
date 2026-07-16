@@ -28,7 +28,9 @@ use DateTimeZone;
  */
 final class AvailabilityService
 {
-    private const STEP_MINUTES = 60;
+    /** Faz D: varsayılan slot adımı 30 dk (eski 60). Tenant başına ayarlanabilir (slot_step_minutes,
+     *  migration 0006); çağıran taraf tenant değerini geçer, yoksa bu varsayılan kullanılır. */
+    public const DEFAULT_STEP_MINUTES = 30;
     private const MIN_LEAD_MINUTES = 30; // "şu andan min. X dk sonra" (03§4 adım 6)
 
     public function __construct(
@@ -46,7 +48,7 @@ final class AvailabilityService
      *
      * @return array<string, string[]> tarih (YYYY-MM-DD) => "HH:MM" slot listesi
      */
-    public function slotsForRange(string $tenantId, string $staffId, string $serviceId, string $startDate, int $days, string $timezone): array
+    public function slotsForRange(string $tenantId, string $staffId, string $serviceId, string $startDate, int $days, string $timezone, int $stepMinutes = self::DEFAULT_STEP_MINUTES): array
     {
         $tz = new DateTimeZone($timezone);
         $cursor = new DateTimeImmutable("{$startDate} 00:00:00", $tz);
@@ -54,7 +56,7 @@ final class AvailabilityService
         $result = [];
         for ($i = 0; $i < $days; $i++) {
             $date = $cursor->modify("+{$i} day")->format('Y-m-d');
-            $result[$date] = $this->slotsFor($tenantId, $staffId, $serviceId, $date, $timezone);
+            $result[$date] = $this->slotsFor($tenantId, $staffId, $serviceId, $date, $timezone, $stepMinutes);
         }
 
         return $result;
@@ -63,7 +65,7 @@ final class AvailabilityService
     /**
      * @return string[] "HH:MM" formatında uygun slot başlangıçları
      */
-    public function slotsFor(string $tenantId, string $staffId, string $serviceId, string $date, string $timezone): array
+    public function slotsFor(string $tenantId, string $staffId, string $serviceId, string $date, string $timezone, int $stepMinutes = self::DEFAULT_STEP_MINUTES): array
     {
         $service = $this->services->find($tenantId, $serviceId);
         if ($service === null) {
@@ -120,8 +122,8 @@ final class AvailabilityService
             // Slotları boş aralığın başından değil, gece yarısına hizalı sabit saat ızgarasından
             // üret (STEP_MINUTES katları). Böylece önceki bir randevu 14:45'te bitse bile sonraki
             // slot her zaman temiz saat başı (15:00) olur, mevcut randevulara göre kaymaz.
-            $gridStart = (int) (ceil($start / self::STEP_MINUTES) * self::STEP_MINUTES);
-            for ($cursor = $gridStart; $cursor + $duration <= $end; $cursor += self::STEP_MINUTES) {
+            $gridStart = (int) (ceil($start / $stepMinutes) * $stepMinutes);
+            for ($cursor = $gridStart; $cursor + $duration <= $end; $cursor += $stepMinutes) {
                 if ($cursor < $earliestAllowed) {
                     continue;
                 }
