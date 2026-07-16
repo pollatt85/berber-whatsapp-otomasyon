@@ -7,6 +7,49 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-16 — Saha pilotu düzeltmeleri: Faz A/B/C/D uygulandı ve DOĞRULANDI (branch: pilot-duzeltmeleri)]**
+  Canlı denetimden çıkan 3 bloker + 7 yüksek + orta riskler kapatıldı. Her madde çalıştırılarak
+  doğrulandı (psql çıktısı / HTTP kodu / node-jsCode replay). Commit'ler: `29f3b05` (A2/A3/B/C),
+  `ca18840` (Y7), `f877414` (Faz D).
+
+  **Yapıldı + görüldü:**
+  - **A2 hatırlatma:** n8n `appointment_reminder`→`reminder_24h`, `time_range`→`start_time_local`
+    (tenant tz'de formatlı saat, `AppointmentScanRepository`). 422 gitti; gönderim yolu `hello_world`
+    ile 5314'e gerçek gönderilerek kanıtlandı.
+  - **A3 işletme ekleme:** `POST /platform/tenants` + panel "Yeni İşletme" formu, tek transaction
+    (tenant+user+ai_settings), global e-posta benzersizliği (409). Uçtan uca doğrulandı (yeni kullanıcı
+    kendi tenant'ına düşüyor).
+  - **Faz B:** Y5 login belirsizliği→409, Y1 sessiz catch→error_log, Y6 24sa preflight (131047),
+    Y3 190→markDisconnected (güvenli sim), Y4 statuses callback→message_log (forward-only), Y2 TTL
+    iptalinde müşteriye bilgi+state reset (n8n/03).
+  - **Faz C:** O1 start_time offset zorunlu + bootstrap `Europe/Istanbul`, O2 hatırlatma penceresi
+    (kaçan tur atlanmaz), O3 suspended login→403, O4 plan limitleri (max_staff/campaigns/ai),
+    O6 `requestReschedule` `sendFlowTrigger`→`sendSlotPicker` (Flow'suz çalışır).
+    **O5 hata DEĞİLDİ** (`CampaignScanRepository:67` `??` zaten PDO jsonb `?` kaçışı, `CHANGELOG:851`).
+  - **Y7 HMAC:** `ServiceHmacMiddleware` yeni şema `ts \n tenant_id \n rawBody` + `X-Timestamp`
+    (±300s). Çapraz-tenant swap ve sabit-GET replay kapatıldı (6 test, swap→401). n8n 4 workflow,
+    24 sign sitesi script'le dönüştürüldü; node-jsCode→canlı middleware replay 6/6.
+  - **Faz D:** slot adımı 30 dk (`AvailabilityService::DEFAULT_STEP_MINUTES`, per-tenant
+    `slot_step_minutes` migration 0006, `?? 30` fallback); slot sayfalama (`more_slots`, 8/sayfa)
+    hem notifier hem n8n 01'de. Sayfalama simülasyonla doğrulandı.
+
+  **KRİTİK — deploy/ziyaret öncesi kullanıcı aksiyonları (kod DEĞİL):**
+  1. **`migrations/0005b_apply_and_fix_ownership.sql` postgres ile çalıştırılmalı.** Tüm tablolar
+     `postgres` (superuser) sahipliğinde; `berber_service` ALTER TABLE yapamıyor → migration 0005
+     (language kolonu) + gelecekteki migration'lar bloke. 0005b hem 0005'i uygular hem sahipliği
+     `berber_service`'e devreder (bir kerelik postgres şifresi). Sonra 0006 servis hesabıyla uygulanır.
+     **0005 uygulanmadan `Şablonlar→Senkronize Et` 500 veriyor (canlı doğrulandı).**
+  2. **n8n'e 4 workflow YENİDEN IMPORT edilmeli** — JSON'lar değişti (Y7 imza şeması + A2 + Y2 + Faz D).
+     PHP (Y7 middleware) ile BİRLİKTE deploy: yoksa çalışan n8n eski şemayla imzalar, Backend tüm
+     n8n isteklerini **401** reddeder. Re-import sonrası duman testi: "merhaba"→menü, cron'lar 401 vermesin.
+  3. **Berberin Meta WABA'sında TR şablonları yok** (`randevu_hatirlatma_24s` vb. — bizim dev
+     hesabımızda da yok, `hello_world`/`jaspers_*` var). Hatırlatma/onay mesajlarının GERÇEKTEN gitmesi
+     için Meta'da oluşturulup onaylanmalı (1-24 sa). Kod tarafı hazır; 132001 alınırsa sebep budur.
+
+  **Buradan test EDİLEMEYEN (deploy'da doğrulanacak):** n8n workflow'larının canlı çalışması
+  (n8n bu ortamdan çalıştırılamıyor; sözleşme replay+simülasyonla doğrulandı), Embedded Signup sihirbazı,
+  Y3 doğal 190 (sim'le doğrulandı).
+
 - **[2026-07-14 — Reboot sonrası WhatsApp cevapsız: ngrok autostart kök-neden + AI SSS kaydedilmemiş]**
   Kullanıcı PC restart attı; Apache/n8n/Redis boot'ta geldi ama WhatsApp cevap vermiyordu.
   **(1) ngrok autostart iki ayrı sebeple ölüyordu** (`scripts/autostart-berber.ps1`, ikisi de
