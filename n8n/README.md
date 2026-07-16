@@ -3,6 +3,21 @@
 Bu dizin, `04_n8n_Workflows.md`'de tasarlanan orkestrasyonun somut n8n JSON export'larini
 icerir (PROJECT_MEMORY.md "Sonraki Oturum Icin Oncelik Sirasi" madde 0, PHASE_13).
 
+## ⚠️ Y7 — HMAC imza semasi degisti (RE-IMPORT SART)
+
+n8n -> Backend imzasi artik yalniz gövdeyi degil `timestamp \n tenant_id \n <rawBody>` uclusunu
+imzalar ve her istekte **`X-Timestamp`** header'i (unix saniye, ±300s pencere) gonderir. Amac:
+GET'lerdeki sabit imzanin süresiz replay'ini ve `?tenant_id=<baska>` ile capraz-tenant okumayi
+engellemek (`ServiceHmacMiddleware`). tenant_id, imzalanan gövdeden (POST/PATCH) ya da query'den
+(GET) alinir — middleware ile birebir ayni kaynak.
+
+**Bu 4 JSON degistiginde n8n'e YENIDEN IMPORT edilmeli**, yoksa calisan instance eski (gövde-only)
+semayla imzalar ve Backend **tüm** n8n isteklerini 401 reddeder. Backend (PHP) ile n8n re-import'u
+BIRLIKTE deploy edilmeli. Ters yön (`Verify Backend Signature`, Backend -> n8n) degismedi.
+
+Deploy sonrasi duman testi: bir gelen "merhaba" -> menu gelmeli; hatirlatma/TTL/kampanya cron'lari
+401 vermemeli (n8n execution loglarindan bak).
+
 ## Mimari sapma: Meta artik n8n'i degil, Backend'i cagirir
 
 04's orijinal tasarimi ("Ortak Giris") Meta'nin webhook'unu n8n'in dogrudan aldigini

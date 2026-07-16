@@ -6,7 +6,10 @@
       "name": "Not",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-360, -260],
+      "position": [
+        -360,
+        -260
+      ],
       "parameters": {
         "width": 480,
         "height": 240,
@@ -18,9 +21,19 @@
       "name": "Every 5 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-360, 0],
+      "position": [
+        -360,
+        0
+      ],
       "parameters": {
-        "rule": { "interval": [ { "field": "cronExpression", "expression": "*/5 * * * *" } ] }
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
       }
     },
     {
@@ -28,10 +41,13 @@
       "name": "Sign: Empty GET",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-120, 0],
+      "position": [
+        -120,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update('').digest('hex');\nreturn { json: { get_signature: signature } };"
+        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + '' + '\\n' + '').digest('hex');\nreturn { json: { ts: __ts, get_signature: signature } };"
       }
     },
     {
@@ -39,12 +55,26 @@
       "name": "Get Campaigns Due For Send",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [120, 0],
+      "position": [
+        120,
+        0
+      ],
       "parameters": {
         "method": "GET",
         "url": "={{$env.BACKEND_BASE_URL}}/internal/campaigns-due-for-send",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [ { "name": "X-Signature", "value": "={{$json.get_signature}}" } ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Signature",
+              "value": "={{$json.get_signature}}"
+            },
+            {
+              "name": "X-Timestamp",
+              "value": "={{$json.ts}}"
+            }
+          ]
+        },
         "options": {}
       }
     },
@@ -53,18 +83,26 @@
       "name": "Split Out Recipients",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [360, 0],
-      "parameters": { "fieldToSplitOut": "data" }
+      "position": [
+        360,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "data"
+      }
     },
     {
       "id": "build_campaign_send",
       "name": "Build Campaign Template Send",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 0],
+      "position": [
+        600,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst row = $json;\nconst bodyObj = {\n  tenant_id: row.tenant_id,\n  type: 'template',\n  customer_id: row.customer_id,\n  template_internal_name: row.template_internal_name,\n  variables: [row.customer_name || ''],\n  idempotency_key: row.campaign_id + '_' + row.customer_id,\n};\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { body_str: bodyStr, signature } };"
+        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\nconst row = $json;\nconst bodyObj = {\n  tenant_id: row.tenant_id,\n  type: 'template',\n  customer_id: row.customer_id,\n  template_internal_name: row.template_internal_name,\n  variables: [row.customer_name || ''],\n  idempotency_key: row.campaign_id + '_' + row.customer_id,\n};\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + (JSON.parse(bodyStr).tenant_id || '') + '\\n' + bodyStr).digest('hex');\nreturn { json: { ts: __ts, body_str: bodyStr, signature } };"
       }
     },
     {
@@ -72,7 +110,10 @@
       "name": "Send Campaign Template",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [840, 0],
+      "position": [
+        840,
+        0
+      ],
       "parameters": {
         "method": "POST",
         "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
@@ -80,21 +121,91 @@
         "specifyBody": "json",
         "jsonBody": "={{$json.body_str}}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [
-          { "name": "Content-Type", "value": "application/json" },
-          { "name": "X-Signature", "value": "={{$json.signature}}" }
-        ] },
-        "options": { "response": { "response": { "neverError": true } } }
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{$json.signature}}"
+            },
+            {
+              "name": "X-Timestamp",
+              "value": "={{$json.ts}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       }
     }
   ],
   "connections": {
-    "Every 5 Minutes": { "main": [ [ { "node": "Sign: Empty GET", "type": "main", "index": 0 } ] ] },
-    "Sign: Empty GET": { "main": [ [ { "node": "Get Campaigns Due For Send", "type": "main", "index": 0 } ] ] },
-    "Get Campaigns Due For Send": { "main": [ [ { "node": "Split Out Recipients", "type": "main", "index": 0 } ] ] },
-    "Split Out Recipients": { "main": [ [ { "node": "Build Campaign Template Send", "type": "main", "index": 0 } ] ] },
-    "Build Campaign Template Send": { "main": [ [ { "node": "Send Campaign Template", "type": "main", "index": 0 } ] ] }
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Sign: Empty GET",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign: Empty GET": {
+      "main": [
+        [
+          {
+            "node": "Get Campaigns Due For Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Campaigns Due For Send": {
+      "main": [
+        [
+          {
+            "node": "Split Out Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Recipients": {
+      "main": [
+        [
+          {
+            "node": "Build Campaign Template Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Campaign Template Send": {
+      "main": [
+        [
+          {
+            "node": "Send Campaign Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "active": false,
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  }
 }

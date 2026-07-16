@@ -6,7 +6,10 @@
       "name": "Not",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [-360, -260],
+      "position": [
+        -360,
+        -260
+      ],
       "parameters": {
         "width": 460,
         "height": 220,
@@ -18,9 +21,19 @@
       "name": "Every 5 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-360, 0],
+      "position": [
+        -360,
+        0
+      ],
       "parameters": {
-        "rule": { "interval": [ { "field": "cronExpression", "expression": "*/5 * * * *" } ] }
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
       }
     },
     {
@@ -28,10 +41,13 @@
       "name": "Sign: Empty GET",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-120, 0],
+      "position": [
+        -120,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update('').digest('hex');\nreturn { json: { get_signature: signature } };"
+        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + '' + '\\n' + '').digest('hex');\nreturn { json: { ts: __ts, get_signature: signature } };"
       }
     },
     {
@@ -39,12 +55,26 @@
       "name": "Get Expired Pending Appointments",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [120, 0],
+      "position": [
+        120,
+        0
+      ],
       "parameters": {
         "method": "GET",
         "url": "={{$env.BACKEND_BASE_URL}}/internal/appointments-expired-pending",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [ { "name": "X-Signature", "value": "={{$json.get_signature}}" } ] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Signature",
+              "value": "={{$json.get_signature}}"
+            },
+            {
+              "name": "X-Timestamp",
+              "value": "={{$json.ts}}"
+            }
+          ]
+        },
         "options": {}
       }
     },
@@ -53,18 +83,26 @@
       "name": "Split Out Appointments",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [360, 0],
-      "parameters": { "fieldToSplitOut": "data" }
+      "position": [
+        360,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "data"
+      }
     },
     {
       "id": "sign_cancel_expired",
       "name": "Sign: Cancel (TTL)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [600, 0],
+      "position": [
+        600,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst appt = $json;\nconst bodyObj = { tenant_id: appt.tenant_id, reason: 'timeout' };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(bodyStr).digest('hex');\nreturn { json: { appointment_id: appt.id, body_str: bodyStr, signature } };"
+        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\nconst appt = $json;\nconst bodyObj = { tenant_id: appt.tenant_id, reason: 'timeout' };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + (JSON.parse(bodyStr).tenant_id || '') + '\\n' + bodyStr).digest('hex');\nreturn { json: { ts: __ts, appointment_id: appt.id, body_str: bodyStr, signature } };"
       }
     },
     {
@@ -72,7 +110,10 @@
       "name": "Cancel Expired Appointment",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [840, 0],
+      "position": [
+        840,
+        0
+      ],
       "parameters": {
         "method": "PATCH",
         "url": "={{$env.BACKEND_BASE_URL}}/appointments/{{$json.appointment_id}}/cancel",
@@ -80,11 +121,29 @@
         "specifyBody": "json",
         "jsonBody": "={{$json.body_str}}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [
-          { "name": "Content-Type", "value": "application/json" },
-          { "name": "X-Signature", "value": "={{$json.signature}}" }
-        ] },
-        "options": { "response": { "response": { "neverError": true } } }
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{$json.signature}}"
+            },
+            {
+              "name": "X-Timestamp",
+              "value": "={{$json.ts}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       }
     },
     {
@@ -92,10 +151,13 @@
       "name": "Build TTL Notify",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1080, 0],
+      "position": [
+        1080,
+        0
+      ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\n// Y2: TTL iptali sessiz olmasin — musteriye bilgi mesaji + state reset. tenant_id/customer_id\n// iptal node'unda dusuyor; orijinal randevuyu Split node'undan al (item eslesmesi korunur).\nconst appt = $('Split Out Appointments').item.json;\nconst text = 'Randevu talebiniz onaylanmadigi icin suresi doldu ve iptal edildi. Yeni randevu icin \"merhaba\" yazabilirsiniz.';\nconst sendObj = { tenant_id: appt.tenant_id, type: 'text', customer_id: appt.customer_id, text, idempotency_key: appt.id + '_ttl_notice' };\nconst sendStr = JSON.stringify(sendObj);\nconst sendSig = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(sendStr).digest('hex');\nconst stateObj = { tenant_id: appt.tenant_id, customer_id: appt.customer_id, step: 'idle', context: {} };\nconst stateStr = JSON.stringify(stateObj);\nconst stateSig = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(stateStr).digest('hex');\nreturn { json: { send_body_str: sendStr, send_signature: sendSig, state_body_str: stateStr, state_signature: stateSig } };"
+        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\n// Y2: TTL iptali sessiz olmasin — musteriye bilgi mesaji + state reset. tenant_id/customer_id\n// iptal node'unda dusuyor; orijinal randevuyu Split node'undan al (item eslesmesi korunur).\nconst appt = $('Split Out Appointments').item.json;\nconst text = 'Randevu talebiniz onaylanmadigi icin suresi doldu ve iptal edildi. Yeni randevu icin \"merhaba\" yazabilirsiniz.';\nconst sendObj = { tenant_id: appt.tenant_id, type: 'text', customer_id: appt.customer_id, text, idempotency_key: appt.id + '_ttl_notice' };\nconst sendStr = JSON.stringify(sendObj);\nconst sendSig = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + (JSON.parse(sendStr).tenant_id || '') + '\\n' + sendStr).digest('hex');\nconst stateObj = { tenant_id: appt.tenant_id, customer_id: appt.customer_id, step: 'idle', context: {} };\nconst stateStr = JSON.stringify(stateObj);\nconst stateSig = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + (JSON.parse(stateStr).tenant_id || '') + '\\n' + stateStr).digest('hex');\nreturn { json: { ts: __ts, send_body_str: sendStr, send_signature: sendSig, state_body_str: stateStr, state_signature: stateSig } };"
       }
     },
     {
@@ -103,7 +165,10 @@
       "name": "Send TTL Notice",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1320, 0],
+      "position": [
+        1320,
+        0
+      ],
       "parameters": {
         "method": "POST",
         "url": "={{$env.BACKEND_BASE_URL}}/internal/whatsapp/send",
@@ -111,11 +176,29 @@
         "specifyBody": "json",
         "jsonBody": "={{$json.send_body_str}}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [
-          { "name": "Content-Type", "value": "application/json" },
-          { "name": "X-Signature", "value": "={{$json.send_signature}}" }
-        ] },
-        "options": { "response": { "response": { "neverError": true } } }
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{$json.send_signature}}"
+            },
+            {
+              "name": "X-Timestamp",
+              "value": "={{$json.ts}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       }
     },
     {
@@ -123,7 +206,10 @@
       "name": "Reset State (TTL)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1560, 0],
+      "position": [
+        1560,
+        0
+      ],
       "parameters": {
         "method": "PATCH",
         "url": "={{$env.BACKEND_BASE_URL}}/conversation-state",
@@ -131,24 +217,124 @@
         "specifyBody": "json",
         "jsonBody": "={{$json.state_body_str}}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [
-          { "name": "Content-Type", "value": "application/json" },
-          { "name": "X-Signature", "value": "={{$json.state_signature}}" }
-        ] },
-        "options": { "response": { "response": { "neverError": true } } }
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Signature",
+              "value": "={{$json.state_signature}}"
+            },
+            {
+              "name": "X-Timestamp",
+              "value": "={{$json.ts}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       }
     }
   ],
   "connections": {
-    "Every 5 Minutes": { "main": [ [ { "node": "Sign: Empty GET", "type": "main", "index": 0 } ] ] },
-    "Sign: Empty GET": { "main": [ [ { "node": "Get Expired Pending Appointments", "type": "main", "index": 0 } ] ] },
-    "Get Expired Pending Appointments": { "main": [ [ { "node": "Split Out Appointments", "type": "main", "index": 0 } ] ] },
-    "Split Out Appointments": { "main": [ [ { "node": "Sign: Cancel (TTL)", "type": "main", "index": 0 } ] ] },
-    "Sign: Cancel (TTL)": { "main": [ [ { "node": "Cancel Expired Appointment", "type": "main", "index": 0 } ] ] },
-    "Cancel Expired Appointment": { "main": [ [ { "node": "Build TTL Notify", "type": "main", "index": 0 } ] ] },
-    "Build TTL Notify": { "main": [ [ { "node": "Send TTL Notice", "type": "main", "index": 0 } ] ] },
-    "Send TTL Notice": { "main": [ [ { "node": "Reset State (TTL)", "type": "main", "index": 0 } ] ] }
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Sign: Empty GET",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign: Empty GET": {
+      "main": [
+        [
+          {
+            "node": "Get Expired Pending Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Expired Pending Appointments": {
+      "main": [
+        [
+          {
+            "node": "Split Out Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Appointments": {
+      "main": [
+        [
+          {
+            "node": "Sign: Cancel (TTL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign: Cancel (TTL)": {
+      "main": [
+        [
+          {
+            "node": "Cancel Expired Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Expired Appointment": {
+      "main": [
+        [
+          {
+            "node": "Build TTL Notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build TTL Notify": {
+      "main": [
+        [
+          {
+            "node": "Send TTL Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send TTL Notice": {
+      "main": [
+        [
+          {
+            "node": "Reset State (TTL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "active": false,
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1"
+  }
 }
