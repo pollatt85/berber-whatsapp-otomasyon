@@ -8,6 +8,15 @@ final class Env
 {
     private static bool $loaded = false;
 
+    /**
+     * .env'den okunan değerlerin istek-yerel önbelleği. Windows Apache (threaded MPM + ZTS)
+     * altında getenv()/putenv() PROCESS-global ortam tablosunu kullanır ve thread-safe DEĞİLDİR;
+     * eşzamanlı istekler tabloyu bozup rastgele değişkeni "missing" gösterir (aralıklı 401/500).
+     * Değerleri bu diziden okuyarak paylaşımlı tabloya olan bağımlılığı ve yarışı kaldırıyoruz.
+     * Statikler her istekte sıfırlanır → load() her istekte dosyadan yeniden doldurur.
+     */
+    private static array $vars = [];
+
     public static function load(string $path): void
     {
         if (self::$loaded || !is_file($path)) {
@@ -22,6 +31,9 @@ final class Env
             [$key, $value] = explode('=', $line, 2);
             $key = trim($key);
             $value = trim($value);
+            // Okumalar buradan yapılır (yarışa bağışık).
+            self::$vars[$key] = $value;
+            // putenv, getenv bekleyen 3. parti kod için best-effort korunur (bizim okumamız $vars'tan).
             if (getenv($key) === false) {
                 putenv("{$key}={$value}");
                 $_ENV[$key] = $value;
@@ -33,6 +45,11 @@ final class Env
 
     public static function get(string $key, ?string $default = null): ?string
     {
+        // Önce istek-yerel önbellek (thread race'e bağışık), sonra gerçek ortam.
+        if (array_key_exists($key, self::$vars)) {
+            return self::$vars[$key];
+        }
+
         $value = getenv($key);
 
         return $value === false ? $default : $value;
