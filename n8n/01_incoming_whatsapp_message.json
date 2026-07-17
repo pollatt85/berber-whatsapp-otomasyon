@@ -276,7 +276,7 @@
       ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const state = $json.data || { step: 'idle', context: '{}' };\nlet context = {};\ntry { context = typeof state.context === 'string' ? JSON.parse(state.context) : (state.context || {}); } catch (e) { context = {}; }\nconst em = $('Extract Message').item.json;\nconst replyId = em.interactive_reply_id || '';\nconst step = state.step || 'idle';\nconst textBody = (em.text_body || '').toLowerCase();\nconst cancelKeywords = ['iptal', 'vazgeç', 'vazgec'];\nconst isCancelIntent = em.message_type === 'text' && cancelKeywords.some((k) => textBody.includes(k));\nlet route;\nif (em.flow_response) route = 'flow_submitted';\nelse if (replyId.indexOf('confirm_') === 0) route = 'confirm';\nelse if (replyId.indexOf('cancel_') === 0) route = 'cancel';\nelse if (replyId.indexOf('reschedule_') === 0) route = 'reschedule';\nelse if (replyId === 'my_appointments') route = 'my_appointments';\nelse if (replyId.indexOf('my_appointment_') === 0) route = 'appointment_selected';\nelse if (step === 'awaiting_service_selection' && replyId.indexOf('svc_') === 0) route = 'service_chosen';\nelse if (step === 'awaiting_staff_selection' && replyId.indexOf('staff_') === 0) route = 'staff_chosen';\nelse if (step === 'awaiting_slot_selection' && replyId.indexOf('slot_') === 0) route = 'slot_chosen';\n  else if (step === 'awaiting_slot_selection' && replyId === 'more_slots') route = 'more_slots';\nelse if (step === 'awaiting_staff_selection' && replyId === 'back_to_service') route = 'back_to_service';\nelse if (step === 'awaiting_slot_selection' && replyId === 'back_to_staff') route = 'back_to_staff';\nelse if (isCancelIntent) route = 'my_appointments';\nelse if (em.message_type === 'text' && step === 'idle') route = 'new_session';\nelse if (em.message_type === 'text') route = 'ai_question';\nelse route = 'unhandled';\nreturn { json: { tenant_id: em.tenant_id, customer_id: $('Upsert Customer').item.json.data.id, customer_whatsapp_number: em.customer_whatsapp_number, reply_id: replyId, flow_response: em.flow_response, get_signature: em.get_signature, state_context: context, route: route } };"
+        "jsCode": "const state = $json.data || { step: 'idle', context: '{}' };\nlet context = {};\ntry { context = typeof state.context === 'string' ? JSON.parse(state.context) : (state.context || {}); } catch (e) { context = {}; }\nconst em = $('Extract Message').item.json;\nconst replyId = em.interactive_reply_id || '';\nconst step = state.step || 'idle';\nconst textBody = (em.text_body || '').toLowerCase();\nconst cancelKeywords = ['iptal', 'vazgeç', 'vazgec'];\nconst isCancelIntent = em.message_type === 'text' && cancelKeywords.some((k) => textBody.includes(k));\nlet route;\nif (em.flow_response) route = 'flow_submitted';\nelse if (replyId.indexOf('confirm_') === 0) route = 'confirm';\nelse if (replyId.indexOf('cancel_') === 0) route = 'cancel';\nelse if (replyId.indexOf('reschedule_') === 0) route = 'reschedule';\nelse if (replyId === 'my_appointments') route = 'my_appointments';\nelse if (replyId.indexOf('my_appointment_') === 0) route = 'appointment_selected';\nelse if (step === 'awaiting_service_selection' && replyId.indexOf('svc_') === 0) route = 'service_chosen';\nelse if (step === 'awaiting_staff_selection' && replyId.indexOf('staff_') === 0) route = 'staff_chosen';\nelse if (step === 'awaiting_slot_selection' && replyId.indexOf('slot_') === 0) route = 'slot_chosen';\n  else if (step === 'awaiting_slot_selection' && replyId === 'more_slots') route = 'more_slots';\nelse if (step === 'awaiting_staff_selection' && replyId === 'back_to_service') route = 'back_to_service';\nelse if (step === 'awaiting_slot_selection' && replyId === 'back_to_staff') route = 'back_to_staff';\nelse if (isCancelIntent) route = 'my_appointments';\nelse if (em.message_type === 'text' && step === 'idle') route = 'new_session';\nelse if (em.message_type === 'text') route = 'ai_question';\nelse route = 'unhandled';\nreturn { json: { tenant_id: em.tenant_id, customer_id: $('Upsert Customer').item.json.data.id, customer_whatsapp_number: em.customer_whatsapp_number, reply_id: replyId, flow_response: em.flow_response, get_signature: em.get_signature, ts: em.ts, state_context: context, route: route } };"
       }
     },
     {
@@ -603,11 +603,11 @@
           "parameters": [
             {
               "name": "X-Signature",
-              "value": "={{$json.get_signature}}"
+              "value": "={{$('Extract Message').item.json.get_signature}}"
             },
             {
               "name": "X-Timestamp",
-              "value": "={{$json.ts}}"
+              "value": "={{$('Extract Message').item.json.ts}}"
             }
           ]
         },
@@ -730,11 +730,11 @@
           "parameters": [
             {
               "name": "X-Signature",
-              "value": "={{$json.get_signature}}"
+              "value": "={{$('Extract Message').item.json.get_signature}}"
             },
             {
               "name": "X-Timestamp",
-              "value": "={{$json.ts}}"
+              "value": "={{$('Extract Message').item.json.ts}}"
             }
           ]
         },
@@ -899,11 +899,11 @@
           "parameters": [
             {
               "name": "X-Signature",
-              "value": "={{$json.get_signature}}"
+              "value": "={{$('Extract Message').item.json.get_signature}}"
             },
             {
               "name": "X-Timestamp",
-              "value": "={{$json.ts}}"
+              "value": "={{$('Extract Message').item.json.ts}}"
             }
           ]
         },
