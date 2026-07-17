@@ -7,6 +7,42 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-17 — Y7 sonrası duman testi: bot HİÇ cevap vermiyordu, İKİ ayrı bug bulundu ve UÇTAN UCA doğrulandı (branch: pilot-duzeltmeleri, commit `670415b`)]**
+  "merhaba" atınca menü gelmiyordu. `webhook_events`'te imza geçerli satır düşüyor ama `message_log` boş →
+  zincir webhook'tan SONRA kopuyordu. İki bağımsız hata:
+  **(1) Forward URL yanlıştı (`.env`, git-dışı — TEKRARLAYAN tuzak):**
+  `N8N_INCOMING_WEBHOOK_URL` yine `http://localhost:5678/webhook/e222f8584095459c/webhook/incoming-whatsapp-message`
+  olmuştu (workflow-id öneki + çift `/webhook/`). n8n'de kayıtlı gerçek yol sadece `incoming-whatsapp-message`
+  (webhook_entity ile doğrulandı) → backend yanlış yola POST → **404** → `N8nNotifier` fire-and-forget (400ms)
+  sessizce yutuyor → n8n hiç tetiklenmiyor. Düzeltme: `.env` → `http://localhost:5678/webhook/incoming-whatsapp-message`.
+  (2026-07-14'te de düzeltilmişti, geri gelmiş — re-import değil, .env değeri sorunlu.)
+  **(2) n8n Y7 ts-drop (kod, commit'lendi):** Forward düzelince n8n tetiklendi ama execution **error** (401).
+  Backend→n8n imza (`Verify Backend Signature`, gövde-only) DOĞRU; n8n→Backend GET çağrısı 401. Kök neden:
+  `Determine Route` node'u return'ünde `get_signature`'ı taşıyıp **`ts`'yi düşürüyordu**; `Get Customer
+  Appointments`/`Get Staff Name For Slots` X-Timestamp'i `$('Determine Route').item.json.ts`'ten okuyunca boş →
+  n8n boş header'ı hiç göndermez → middleware "Missing X-Timestamp" → 401. (get_signature vardı, o yüzden
+  x-signature gidiyor ama x-timestamp gitmiyordu — teşhisin anahtarı buydu.) Düzeltme: Determine Route'a
+  `ts: em.ts` + `Get Services`/`Get Staff For Service`/`Get Availability` header'ları
+  `$('Extract Message').item.json.{get_signature,ts}`'e bağlandı (deep-item çözümü kanıtlı). 01 re-import edildi.
+  **DOĞRULAMA (gözlemlendi):** "merhaba"→menü→hizmet/personel/slot→**"Randevunuz oluşturuldu"** (gerçek randevu),
+  n8n exec 592/593 **success**, 401 yok, `meta_error_code` boş, message_log inbound+outbound çiftleri tam.
+  **Teşhis yöntemi (gelecek oturum):** bot cevapsızsa `webhook_events`(sig geçerli mi) vs `message_log`(boş mu)
+  karşılaştır → boşsa zincir n8n'de. n8n execution: sqlite `execution_entity` (status=error) + `execution_data`
+  (referans-havuzu formatı; PHP ile pool[idx] çözerek uri/headers/lastNodeExecuted okunur). psql: `berber_service`
+  BYPASSRLS ile tüm tenant'ları görür; PGPASSWORD `.env`'den. n8n CLI: `C:\nvm4w\nodejs\n8n.cmd`.
+  **02/03 (hatırlatma/TTL):** yapı doğru (her çağrı bitişik Sign/Build node'undan ts alır, Determine Route yok);
+  ikisi de **"Published" (aktif)** edildi. GET tarama uçları imzalı curl ile **200 doğrulandı** (401 yok):
+  `/internal/appointments-due-for-reminder` (imza `HMAC(ts+"\n"+"\n")`, tenant+body boş) → 200 (bekleyen randevu
+  var), `/internal/appointments-expired-pending` → 200 (boş). 02 hatırlatma Meta TR şablonu yoksa
+  GÖNDEREMEZ (132001, cron dönse de); 03 TTL şablonsuz DB'de çalışır.
+  **GÜVENLİK — secret rotasyonu YAPILDI (bu oturum):** rotasyon sırasında daha ciddi bir sızıntı bulundu — canlı
+  `N8N_SERVICE_SECRET`, git-izlenen `scripts/start_n8n.cmd` içinde düz metin hardcoded idi (ve BACKEND_BASE_URL=8000
+  yanlıştı). Rotasyon: yeni 64-hex `.env`'e yazıldı; backend anında geçti (eski secret→401, yeni→200 doğrulandı).
+  n8n autostart ile restart edildi (yeni PID, secret'ı .env'den okur) → restart sonrası cron `#597` (WF 03) **SUCCESS**
+  = n8n yeni secret'la backend'den 200 alıyor, 401 yok. `start_n8n.cmd` temizlendi (secret artık .env'den okunuyor,
+  8081'e düzeltildi). NOT: eski (artık ölü) secret git GEÇMİŞİNDE hâlâ duruyor — rotasyon sonrası değersiz, history
+  scrub opsiyonel. `start_n8n.cmd` değişikliği henüz COMMIT'lenmedi. **Doğrulama:** 02(`*/15`)/03(`*/5`) cron'ları
+  schedule-trigger ile normal dönüyor, tüm execution success, hiç 401/error yok (n8n `startedAt` UTC, shell UTC+3).
 - **[2026-07-16 — Saha pilotu düzeltmeleri: Faz A/B/C/D uygulandı ve DOĞRULANDI (branch: pilot-duzeltmeleri)]**
   Canlı denetimden çıkan 3 bloker + 7 yüksek + orta riskler kapatıldı. Her madde çalıştırılarak
   doğrulandı (psql çıktısı / HTTP kodu / node-jsCode replay). Commit'ler: `29f3b05` (A2/A3/B/C),
