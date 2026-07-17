@@ -144,7 +144,7 @@
       ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\nconst bodyObj = { tenant_id: $json.tenant_id, whatsapp_number: $json.customer_whatsapp_number };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + (JSON.parse(bodyStr).tenant_id || '') + '\\n' + bodyStr).digest('hex');\nreturn { json: { ts: __ts, ...$json, body_str: bodyStr, signature } };"
+        "jsCode": "const crypto = require('crypto');\nconst __ts = Math.floor(Date.now()/1000).toString(); // Y7: imza zaman damgasi\nconst bodyObj = { tenant_id: $json.tenant_id, whatsapp_number: $json.customer_whatsapp_number };\nconst bodyStr = JSON.stringify(bodyObj);\nconst signature = crypto.createHmac('sha256', $env.N8N_SERVICE_SECRET).update(__ts + '\\n' + (JSON.parse(bodyStr).tenant_id || '') + '\\n' + bodyStr).digest('hex');\nreturn { json: { ...$json, ts: __ts, body_str: bodyStr, signature } };"
       }
     },
     {
