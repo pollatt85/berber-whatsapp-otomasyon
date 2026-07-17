@@ -7,6 +7,17 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-17 — "Saat Değiştir → seçenek gelmiyor"un kökü: Sign ts-override → aralıklı 401 (commit `83628b3`)]**
+  Kullanıcı onay ekranında "Saat Değiştir" (reschedule) basınca akış durdu. n8n exec #633 **error**:
+  `Upsert Customer` node → backend **401 "Invalid service signature"** (NOT env-race: log'da Missing yok).
+  Brute-force ile kanıt: n8n imzayı `ts=678` ile hesaplamış ama X-Timestamp header'ına `ts=677` gitmiş →
+  backend 677 ile doğrulayıp uyuşmadı. Kök: **yalnız `Sign: Upsert Customer`** düğümü `{ ts: __ts, ...$json }`
+  yapıyordu; `$json`'daki eski `ts` (Extract Message) spread ile taze `__ts`'yi eziyordu. Execution bir
+  **saniye sınırını** geçtiğinde (hızlı akışta rastgele) header/imza ts ayrışıp 401. Upsert Customer HER
+  mesajda çalıştığı için herhangi bir adımı vuruyordu — "bazen cevap vermiyor"un ASIL parçası. Diğer 16
+  Sign düğümü temiz (spread yok). **Fix:** `{ ...$json, ts: __ts, ... }`. Doğrulama: node ile birebir
+  semantik replay (eski→401, yeni→200, saniye sınırı). #633 buradan öldü, reschedule mantığına ulaşamadı;
+  fix sonrası reschedule de akmalı. **DEPLOY: n8n re-import gerekir.** Env-race (500) ile AYRI iki bug.
 - **[2026-07-17 — ARALIKLI 401/500'ün asıl kökü bulundu: Env getenv/putenv thread-race (commit `9516044`)]**
   Kullanıcı testinde "randevu→hizmet→personel" çalıştı ama **usta seçiminden sonra slot listesi gelmedi**.
   Sanılanın aksine **slot değişikliğim değil** (aggregate çıktısı execution #619'dan doğrulandı: 8 slot+more+back,
