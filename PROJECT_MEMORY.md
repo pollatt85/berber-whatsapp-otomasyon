@@ -7,6 +7,15 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-17 — Slot listesine "⏮ Başa dön" eklendi (n8n 01, branch: pilot-duzeltmeleri)]**
+  Müşteri "Daha fazla saat ▶" ile ilerleyince şimdiki saatlere dönemiyordu. Sadece `n8n/01`'de çözüldü
+  (PHP değişmedi): `Determine Route`'a `reset_slots` rotası, `Route` switch'ine kural + connections çıktısı
+  (aynı `Prepare Availability Query (More Slots)` prep'ine), `aggregate_slots`'ta dinamik satır bütçesi
+  (WhatsApp 10 satır sınırı: `capWithMore/capNoMore`) + offset>0'da `reset_slots` satırı + değişken ilerleme
+  (offset 0→+8, >0→+7, gösterilen slot kadar). `reset_slots` rotası aggregate'te `slotOffset=0` verir.
+  **Doğrulama:** yan-etkisiz replay (N=0..45) — her sayfa ≤10 satır, kapsama tam, tekrar yok, offset>0'da
+  reset çıkıyor; switch 14 kural+1 fallback = 15 çıktı = connections. **DEPLOY: n8n'e yeniden import ŞART**
+  (yoksa canlıya yansımaz; HMAC şeması değişmediği için 401 riski yok). Canlı duman testi import sonrası.
 - **[2026-07-17 — Y7 sonrası duman testi: bot HİÇ cevap vermiyordu, İKİ ayrı bug bulundu ve UÇTAN UCA doğrulandı (branch: pilot-duzeltmeleri, commit `670415b`)]**
   "merhaba" atınca menü gelmiyordu. `webhook_events`'te imza geçerli satır düşüyor ama `message_log` boş →
   zincir webhook'tan SONRA kopuyordu. İki bağımsız hata:
