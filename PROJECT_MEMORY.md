@@ -7,6 +7,17 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
 
 ## Genel Durum
 
+- **[2026-07-17 — ARALIKLI 401/500'ün asıl kökü bulundu: Env getenv/putenv thread-race (commit `9516044`)]**
+  Kullanıcı testinde "randevu→hizmet→personel" çalıştı ama **usta seçiminden sonra slot listesi gelmedi**.
+  Sanılanın aksine **slot değişikliğim değil** (aggregate çıktısı execution #619'dan doğrulandı: 8 slot+more+back,
+  10 satır, geçerli). Backend `POST /internal/whatsapp/send` → **500 "Unexpected server error"**; vhost logu
+  (`berber-whatsapp-otomasyon-error.log`): **"Missing required environment variable: APP_ENCRYPTION_KEY"**
+  (#614'te de N8N_SERVICE_SECRET → 401). Değişken `.env`'de VAR. Kök neden: `src/Config/Env.php` değeri `getenv()`
+  ile okuyordu; XAMPP Apache **threaded MPM + ZTS PHP**'de `getenv/putenv` thread-safe değil → eşzamanlı
+  webhook'lar (hızlı mesajlaşma) ortam tablosunu bozup rastgele değişkeni "missing" yapıyor. Reprodüksiyon:
+  30 eşzamanlı imzalı istek → 3×500. **Fix:** .env değerleri istek-yerel `Env::$vars` dizisine alınır, okumalar
+  oradan (yarışa bağışık). Fix sonrası 130 eşzamanlı → 130×200, sıfır hata. Detay: auto-memory
+  `env-getenv-thread-race`. **Kullanıcı canlı doğrulaması gerekiyor:** WhatsApp'ta randevu→usta→slot akışı.
 - **[2026-07-17 — Slot listesine "⏮ Başa dön" eklendi (n8n 01, branch: pilot-duzeltmeleri)]**
   Müşteri "Daha fazla saat ▶" ile ilerleyince şimdiki saatlere dönemiyordu. Sadece `n8n/01`'de çözüldü
   (PHP değişmedi): `Determine Route`'a `reset_slots` rotası, `Route` switch'ine kural + connections çıktısı
