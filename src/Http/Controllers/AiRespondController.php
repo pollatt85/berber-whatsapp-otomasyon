@@ -14,6 +14,7 @@ use App\Repository\StaffRepository;
 use App\Repository\StaffScheduleRepository;
 use App\Support\LlmClient;
 use App\Support\RateLimiter;
+use App\Support\TokenCipher;
 
 /**
  * `POST /ai/respond` (07_AI_Module.md §2/§4/§5). n8n servis kanalı (HMAC), tenant_id body'den,
@@ -39,7 +40,10 @@ final class AiRespondController
         private StaffScheduleRepository $schedules,
         private MessageLogRepository $messages,
         private RateLimiter $rateLimiter,
-        private ?LlmClient $llm
+        private ?LlmClient $llm,
+        // Per-berber (BYOK) 0007: düz-metin anahtar → tenant'a özel LlmClient (provider-agnostik).
+        private \Closure $tenantLlmFactory,
+        private string $encryptionKey
     ) {
     }
 
@@ -60,9 +64,23 @@ final class AiRespondController
             return $this->fallback('disabled');
         }
 
-        // (b) Yapılandırılmış sağlayıcı yok (API anahtarı boş — dev'de .env'de BOŞ) → gerçek
-        // çağrı yapma, graceful hata yolu.
-        if ($this->llm === null) {
+        // (b) Sağlayıcı seçimi (07§4 + BYOK 0007): tenant kendi Gemini anahtarını girdiyse onunla
+        // client kur; yoksa global .env client'ı kullan. Çözüm/decrypt hatasında global'e düş —
+        // tek tenant'ın bozuk anahtarı diğerlerini etkilemez, n8n'e 5xx dönmez (§5).
+        $client = $this->llm;
+        $keyHex = (string) ($settings['gemini_api_key_hex'] ?? '');
+        if ($keyHex !== '') {
+            try {
+                $tenantKey = TokenCipher::decrypt(hex2bin($keyHex), $this->encryptionKey);
+                $client = ($this->tenantLlmFactory)($tenantKey);
+            } catch (\Throwable $e) {
+                error_log('[ai/respond] tenant key resolve failed, falling back to global: ' . $e->getMessage());
+                $client = $this->llm;
+            }
+        }
+
+        // Kullanılabilir sağlayıcı yok (tenant anahtarsız ve global .env de boş) → graceful hata.
+        if ($client === null) {
             return $this->fallback('no_api_key');
         }
 
@@ -77,7 +95,7 @@ final class AiRespondController
         $messages = [['role' => 'user', 'content' => $message]];
 
         try {
-            $result = $this->llm->structuredReply($system, $messages);
+            $result = $client->structuredReply($system, $messages);
         } catch (\Throwable $e) {
             error_log('[ai/respond] LLM call failed: ' . $e->getMessage());
             return $this->fallback('llm_error');

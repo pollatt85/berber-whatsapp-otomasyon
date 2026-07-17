@@ -38,6 +38,19 @@
   </div>
 
   <div class="card mb-3">
+    <div class="card-header bg-body fw-medium">Gemini API Anahtarı</div>
+    <div class="card-body">
+      <label class="form-label" for="aiGeminiKey">Kendi Gemini API anahtarınız</label>
+      <input type="password" class="form-control" id="aiGeminiKey" autocomplete="off"
+        placeholder="AIza...">
+      <div class="form-text">
+        Google AI Studio'dan aldığınız kendi anahtarınız. Boş bırakırsanız sistem anahtarı
+        kullanılır. Girdiğiniz anahtar şifreli saklanır ve bu ekranda tekrar gösterilmez.
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
     <div class="card-header d-flex justify-content-between align-items-center bg-body">
       <span class="fw-medium">Sık Sorulan Sorular</span>
       <button type="button" class="btn btn-sm btn-outline-primary" id="btnAddFaq">
@@ -119,6 +132,10 @@ async function loadAiSettings() {
   const pol = (kb && kb.policies) || {};
   document.getElementById('polCancellation').value = pol.cancellation || '';
   document.getElementById('polLateArrival').value = pol.late_arrival || '';
+  // BYOK: anahtar hiçbir zaman GET'te dönmez; yalnız kayıtlı olup olmadığını göster.
+  const gk = document.getElementById('aiGeminiKey');
+  gk.value = '';
+  gk.placeholder = s.has_gemini_key ? '•••• kayıtlı (değiştirmek için yeni anahtar girin)' : 'AIza...';
 }
 
 document.getElementById('aiForm').addEventListener('submit', async (ev) => {
@@ -131,18 +148,22 @@ document.getElementById('aiForm').addEventListener('submit', async (ev) => {
   const btn = document.getElementById('aiSaveBtn');
   btn.disabled = true;
   document.getElementById('aiSaveSpinner').classList.remove('d-none');
-  try {
-    const res = await Panel.api('PATCH', '/settings/ai', {
-      enabled: document.getElementById('aiEnabled').checked,
-      tone: document.getElementById('aiTone').value,
-      knowledge_base: {
-        faq,
-        policies: {
-          cancellation: document.getElementById('polCancellation').value.trim(),
-          late_arrival: document.getElementById('polLateArrival').value.trim(),
-        },
+  const payload = {
+    enabled: document.getElementById('aiEnabled').checked,
+    tone: document.getElementById('aiTone').value,
+    knowledge_base: {
+      faq,
+      policies: {
+        cancellation: document.getElementById('polCancellation').value.trim(),
+        late_arrival: document.getElementById('polLateArrival').value.trim(),
       },
-    });
+    },
+  };
+  // BYOK: anahtarı yalnız kullanıcı yeni değer yazdıysa gönder; boşsa mevcut anahtar korunur.
+  const geminiKey = document.getElementById('aiGeminiKey').value.trim();
+  if (geminiKey !== '') payload.gemini_api_key = geminiKey;
+  try {
+    const res = await Panel.api('PATCH', '/settings/ai', payload);
     if (res.ok) {
       Panel.alert('AI ayarları kaydedildi.', 'success');
       loadAiSettings();

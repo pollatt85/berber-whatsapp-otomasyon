@@ -229,7 +229,11 @@ $router->post('/ai/respond', function (Request $req) {
         new StaffScheduleRepository($db),
         new MessageLogRepository($db),
         new RateLimiter($redis),
-        resolveLlmClient()
+        resolveLlmClient(),
+        // BYOK (0007): tenant kendi Gemini anahtarını girdiyse onunla client kurulur; yoksa
+        // resolveLlmClient() global fallback devreye girer.
+        fn (string $k) => new GeminiClient($k, Env::get('GEMINI_MODEL', '')),
+        Env::required('APP_ENCRYPTION_KEY')
     );
     return $controller->respond($req);
 });

@@ -20,6 +20,9 @@ final class AiSettingsRepository
         'knowledge_base' => '{}',
         'rate_limit_per_minute' => 10,
         'updated_at' => null,
+        // Per-berber (BYOK) Gemini anahtarı (0007). Satır yoksa null → sistem global .env
+        // anahtarına düşer. Yalnız hex biçimi taşınır; düz metin asla dışarı çıkmaz.
+        'gemini_api_key_hex' => null,
     ];
 
     public function __construct(private PDO $db)
@@ -29,8 +32,9 @@ final class AiSettingsRepository
     public function find(string $tenantId): array
     {
         $stmt = $this->db->prepare(
-            'SELECT enabled, tone, knowledge_base, rate_limit_per_minute, updated_at
-             FROM ai_settings WHERE tenant_id = :tenant_id'
+            "SELECT enabled, tone, knowledge_base, rate_limit_per_minute, updated_at,
+                    encode(gemini_api_key_encrypted, 'hex') AS gemini_api_key_hex
+             FROM ai_settings WHERE tenant_id = :tenant_id"
         );
         $stmt->execute(['tenant_id' => $tenantId]);
         $row = $stmt->fetch();
@@ -51,20 +55,29 @@ final class AiSettingsRepository
         $stmt->execute(['tenant_id' => $tenantId]);
     }
 
-    public function upsert(string $tenantId, bool $enabled, string $tone, array $knowledgeBase): array
+    /**
+     * $geminiKeyHex: TokenCipher::encrypt çıktısının bin2hex'i (BYOK anahtarı, 0007) veya null.
+     * null geçilince mevcut anahtar KORUNUR (COALESCE) — panelde alan boş bırakıldığında Kaydet
+     * anahtarı silmez. INSERT dalında null → kolon null kalır.
+     */
+    public function upsert(string $tenantId, bool $enabled, string $tone, array $knowledgeBase, ?string $geminiKeyHex = null): array
     {
         $stmt = $this->db->prepare(
-            'INSERT INTO ai_settings (tenant_id, enabled, tone, knowledge_base, updated_at)
-             VALUES (:tenant_id, :enabled, :tone, :kb, now())
+            "INSERT INTO ai_settings (tenant_id, enabled, tone, knowledge_base, gemini_api_key_encrypted, updated_at)
+             VALUES (:tenant_id, :enabled, :tone, :kb, decode(:gk, 'hex'), now())
              ON CONFLICT (tenant_id) DO UPDATE
                  SET enabled = EXCLUDED.enabled, tone = EXCLUDED.tone,
-                     knowledge_base = EXCLUDED.knowledge_base, updated_at = now()
-             RETURNING enabled, tone, knowledge_base, rate_limit_per_minute, updated_at'
+                     knowledge_base = EXCLUDED.knowledge_base,
+                     gemini_api_key_encrypted = COALESCE(decode(:gk, 'hex'), ai_settings.gemini_api_key_encrypted),
+                     updated_at = now()
+             RETURNING enabled, tone, knowledge_base, rate_limit_per_minute, updated_at,
+                       encode(gemini_api_key_encrypted, 'hex') AS gemini_api_key_hex"
         );
         $stmt->bindValue('tenant_id', $tenantId);
         $stmt->bindValue('enabled', $enabled, PDO::PARAM_BOOL);
         $stmt->bindValue('tone', $tone);
         $stmt->bindValue('kb', json_encode($knowledgeBase, JSON_UNESCAPED_UNICODE));
+        $stmt->bindValue('gk', $geminiKeyHex, $geminiKeyHex === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
         $stmt->execute();
 
         return $stmt->fetch();

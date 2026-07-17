@@ -9,6 +9,8 @@ use App\Http\Request;
 use App\Http\Response;
 use App\Repository\AiSettingsRepository;
 use App\Repository\TenantRepository;
+use App\Config\Env;
+use App\Support\TokenCipher;
 
 /**
  * `GET/PATCH /settings/ai` (06_Admin_Panel.md §8, 07_AI_Module.md §6). Panel alanları:
@@ -28,7 +30,7 @@ final class AiSettingsController
 
     public function show(Request $request, string $tenantId): Response
     {
-        return Response::json(['data' => $this->settings->find($tenantId)]);
+        return Response::json(['data' => $this->sanitize($this->settings->find($tenantId))]);
     }
 
     public function update(Request $request, string $tenantId, array $args, string $role): Response
@@ -81,6 +83,29 @@ final class AiSettingsController
             throw new ApiException('plan_limit', 'AI özelliği planınıza dahil değil.', 403);
         }
 
-        return Response::json(['data' => $this->settings->upsert($tenantId, $enabled, $tone, $knowledgeBase)]);
+        // Per-berber (BYOK) Gemini anahtarı (0007): yalnız yeni değer yazıldıysa şifrele.
+        // Boş/yoksa → null geçilir, upsert COALESCE ile mevcut anahtarı korur. Anahtar loglanmaz.
+        $geminiKeyHex = null;
+        $geminiKey = trim((string) $request->input('gemini_api_key', ''));
+        if ($geminiKey !== '') {
+            $encrypted = TokenCipher::encrypt($geminiKey, Env::required('APP_ENCRYPTION_KEY'));
+            $geminiKeyHex = bin2hex($encrypted);
+        }
+
+        $row = $this->settings->upsert($tenantId, $enabled, $tone, $knowledgeBase, $geminiKeyHex);
+
+        return Response::json(['data' => $this->sanitize($row)]);
+    }
+
+    /**
+     * Anahtarı yanıttan çıkarır; yerine yalnız `has_gemini_key` boolean koyar (07§5 PII/güvenlik —
+     * BYOK anahtarı GET/PATCH yanıtında asla dönmez).
+     */
+    private function sanitize(array $row): array
+    {
+        $row['has_gemini_key'] = (bool) ($row['gemini_api_key_hex'] ?? '');
+        unset($row['gemini_api_key_hex']);
+
+        return $row;
     }
 }
