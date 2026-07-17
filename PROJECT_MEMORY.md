@@ -70,11 +70,11 @@ bu dosya ise "şu an nerede kaldık" anlık fotoğrafıdır — her oturum sonun
     hem notifier hem n8n 01'de. Sayfalama simülasyonla doğrulandı.
 
   **KRİTİK — deploy/ziyaret öncesi kullanıcı aksiyonları (kod DEĞİL):**
-  1. **`migrations/0005b_apply_and_fix_ownership.sql` postgres ile çalıştırılmalı.** Tüm tablolar
-     `postgres` (superuser) sahipliğinde; `berber_service` ALTER TABLE yapamıyor → migration 0005
-     (language kolonu) + gelecekteki migration'lar bloke. 0005b hem 0005'i uygular hem sahipliği
-     `berber_service`'e devreder (bir kerelik postgres şifresi). Sonra 0006 servis hesabıyla uygulanır.
-     **0005 uygulanmadan `Şablonlar→Senkronize Et` 500 veriyor (canlı doğrulandı).**
+  1. **~~0005b çalıştırılmalı~~ → 2026-07-17'de UYGULANMIŞ DURUMDA (doğrulandı).** 18 public tablonun
+     tamamı artık `berber_service` sahipliğinde, `message_templates.language` kolonu var (NOT NULL default 'tr').
+     0005b idempotent olduğundan tekrar çalıştırıldı, no-op onayladı → DDL engeli kalktı, `Şablonlar→Senkronize Et`
+     500'ünün kök nedeni (eksik kolon) giderildi. **ŞİFRE GEREKMEDİ:** pg_hba localhost `trust` — postgres'e
+     şifresiz bağlanılıyor (`PGPASSWORD="" psql -U postgres -h 127.0.0.1`). Gelecek migration'lar servis hesabıyla.
   2. **n8n'e 4 workflow YENİDEN IMPORT edilmeli** — JSON'lar değişti (Y7 imza şeması + A2 + Y2 + Faz D).
      PHP (Y7 middleware) ile BİRLİKTE deploy: yoksa çalışan n8n eski şemayla imzalar, Backend tüm
      n8n isteklerini **401** reddeder. Re-import sonrası duman testi: "merhaba"→menü, cron'lar 401 vermesin.
